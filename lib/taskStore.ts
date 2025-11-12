@@ -46,6 +46,23 @@ export interface ProcessedInfo {
   running_time: number;
 }
 
+export interface RunStatistics {
+  hasTasks: boolean;
+  allCompleted: boolean;
+  totalTasks: number;
+  completedTasks: number;
+  pendingTasks: number;
+  processingTasks: number;
+  failedTasks: number;
+  startTime: number | null;
+  endTime: number | null;
+  durationMs: number | null;
+  totalItemNum: number;
+  totalRunningTime: number;
+  averageTaskSpeed: number | null;
+  averageItemSpeed: number | null;
+}
+
 class TaskStore {
   private tasks = new Map<string, TaskRecord>();
   private pathToTaskId = new Map<string, string>();
@@ -64,8 +81,13 @@ class TaskStore {
 
   // Node statistics
   private nodeStats = new Map<string, NodeStats>();
-  private static readonly MAX_NODE_HISTORY = 20;
+  private static readonly MAX_NODE_HISTORY = 60;
   private static readonly NODE_STAT_RETENTION_MS = 2 * 60 * 60 * 1000;
+
+  // Run statistics
+  private totalProcessedItemNum = 0;
+  private totalProcessedRunningTime = 0;
+  private lastProcessedAt: number | null = null;
 
   enqueueTasksFromPaths(paths: string[]): EnqueueResult {
     let added = 0;
@@ -152,6 +174,11 @@ class TaskStore {
 
     this.processingSet.delete(taskId);
     this.processingStartedAt.delete(taskId);
+    this.pendingSet.delete(taskId);
+
+    if (task.status === "completed" && !success) {
+      return { ok: true as const, status: task.status };
+    }
 
     task.updatedAt = Date.now();
     task.message = message || undefined;
@@ -270,6 +297,10 @@ class TaskStore {
       this.updateNodeAggregates(initialNode);
       this.nodeStats.set(info.node_id, initialNode);
     }
+
+    this.totalProcessedItemNum += info.item_num;
+    this.totalProcessedRunningTime += info.running_time;
+    this.lastProcessedAt = now;
   }
 
   getAllNodeStats(): NodeStats[] {
@@ -327,6 +358,10 @@ class TaskStore {
     this.failedSet.clear();
     this.failedList = [];
     // Note: We keep nodeStats as they represent historical statistics
+
+    this.totalProcessedItemNum = 0;
+    this.totalProcessedRunningTime = 0;
+    this.lastProcessedAt = null;
     
     return { cleared: clearedCount };
   }
@@ -356,6 +391,94 @@ class TaskStore {
     return {
       tasks: tasks.slice(start, end).map((task) => ({ ...task })),
       total,
+    };
+  }
+
+  getRunStatistics(): RunStatistics {
+    const tasks = [...this.tasks.values()];
+    const counts = this.getCounts();
+
+    if (tasks.length === 0) {
+      const averageItemSpeed =
+        this.totalProcessedRunningTime > 0
+          ? this.totalProcessedItemNum / this.totalProcessedRunningTime
+          : null;
+
+      return {
+        hasTasks: false,
+        allCompleted: false,
+        totalTasks: 0,
+        completedTasks: 0,
+        pendingTasks: 0,
+        processingTasks: 0,
+        failedTasks: 0,
+        startTime: null,
+        endTime: null,
+        durationMs: null,
+        totalItemNum: this.totalProcessedItemNum,
+        totalRunningTime: this.totalProcessedRunningTime,
+        averageTaskSpeed: null,
+        averageItemSpeed: averageItemSpeed,
+      };
+    }
+
+    const totalTasks = tasks.length;
+    const completedTasks = counts.completed;
+    const pendingTasks = counts.pending;
+    const processingTasks = counts.processing;
+    const failedTasks = counts.failed;
+
+    const rawStartTime = tasks.reduce(
+      (min, task) => Math.min(min, task.createdAt),
+      Number.POSITIVE_INFINITY,
+    );
+    const completedTaskTimestamps = tasks
+      .filter((task) => task.status === "completed")
+      .map((task) => task.updatedAt);
+
+    const startTime = Number.isFinite(rawStartTime) ? rawStartTime : null;
+    const endTime =
+      completedTaskTimestamps.length > 0
+        ? Math.max(...completedTaskTimestamps)
+        : null;
+
+    const durationMs =
+      startTime !== null && endTime !== null && endTime >= startTime
+        ? endTime - startTime
+        : null;
+
+    const averageTaskSpeed =
+      durationMs && durationMs > 0
+        ? completedTasks / (durationMs / 1000)
+        : null;
+
+    const averageItemSpeed =
+      this.totalProcessedRunningTime > 0
+        ? this.totalProcessedItemNum / this.totalProcessedRunningTime
+        : null;
+
+    const allCompleted =
+      totalTasks > 0 &&
+      completedTasks === totalTasks &&
+      pendingTasks === 0 &&
+      processingTasks === 0 &&
+      failedTasks === 0;
+
+    return {
+      hasTasks: true,
+      allCompleted,
+      totalTasks,
+      completedTasks,
+      pendingTasks,
+      processingTasks,
+      failedTasks,
+      startTime,
+      endTime,
+      durationMs,
+      totalItemNum: this.totalProcessedItemNum,
+      totalRunningTime: this.totalProcessedRunningTime,
+      averageTaskSpeed,
+      averageItemSpeed,
     };
   }
 

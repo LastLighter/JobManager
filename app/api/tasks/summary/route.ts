@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
   let targetPage = page;
   let paginated = taskStore.listTasksByStatus(status, targetPage, pageSize);
   const maxPage = Math.max(1, Math.ceil((paginated.total || 0) / pageSize));
+  const runStats = taskStore.getRunStatistics();
 
   if (targetPage > maxPage) {
     targetPage = maxPage;
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
       createdAt: task.createdAt,
       processingStartedAt: task.processingStartedAt ?? null,
     })),
+    runStats,
   });
 }
 
