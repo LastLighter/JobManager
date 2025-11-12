@@ -1,12 +1,13 @@
+import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { taskStore } from "@/lib/taskStore";
 
 export async function DELETE(
-  _request: Request,
-  context: { params: { nodeId: string } },
+  _request: NextRequest,
+  { params }: { params: Promise<{ nodeId: string }> },
 ) {
-  const nodeId = context.params.nodeId;
+  const { nodeId } = await params;
 
   if (!nodeId) {
     return NextResponse.json(
