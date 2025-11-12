@@ -13,7 +13,16 @@ export async function GET() {
       recordCount: node.recordCount,
       avgSpeed: node.avgSpeed,
       lastUpdated: node.lastUpdated,
+      recentRecords: node.recentRecords,
     })),
+  });
+}
+
+export async function DELETE() {
+  const result = taskStore.clearNodeStats();
+  return NextResponse.json({
+    success: true,
+    cleared: result.cleared,
   });
 }
 

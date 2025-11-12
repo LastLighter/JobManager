@@ -23,6 +23,13 @@ interface EnqueueResult {
   skipped: number;
 }
 
+export interface NodePerformanceRecord {
+  timestamp: number;
+  itemNum: number;
+  runningTime: number;
+  speed: number;
+}
+
 export interface NodeStats {
   nodeId: string;
   totalItemNum: number;
@@ -30,6 +37,7 @@ export interface NodeStats {
   recordCount: number;
   avgSpeed: number; // items per second
   lastUpdated: number;
+  recentRecords: NodePerformanceRecord[];
 }
 
 export interface ProcessedInfo {
@@ -56,6 +64,8 @@ class TaskStore {
 
   // Node statistics
   private nodeStats = new Map<string, NodeStats>();
+  private static readonly MAX_NODE_HISTORY = 20;
+  private static readonly NODE_STAT_RETENTION_MS = 2 * 60 * 60 * 1000;
 
   enqueueTasksFromPaths(paths: string[]): EnqueueResult {
     let added = 0;
@@ -230,31 +240,57 @@ class TaskStore {
   }
 
   recordNodeProcessedInfo(info: ProcessedInfo): void {
-    const existing = this.nodeStats.get(info.node_id);
     const now = Date.now();
+    this.pruneNodeStats(now);
 
+    const speed = info.running_time > 0 ? info.item_num / info.running_time : 0;
+    const historyRecord: NodePerformanceRecord = {
+      timestamp: now,
+      itemNum: info.item_num,
+      runningTime: info.running_time,
+      speed,
+    };
+
+    const existing = this.nodeStats.get(info.node_id);
     if (existing) {
-      existing.totalItemNum += info.item_num;
-      existing.totalRunningTime += info.running_time;
-      existing.recordCount += 1;
-      existing.avgSpeed =
-        existing.totalRunningTime > 0 ? existing.totalItemNum / existing.totalRunningTime : 0;
-      existing.lastUpdated = now;
+      existing.recentRecords = [...existing.recentRecords, historyRecord]
+        .filter((record) => now - record.timestamp <= TaskStore.NODE_STAT_RETENTION_MS)
+        .slice(-TaskStore.MAX_NODE_HISTORY);
+      this.updateNodeAggregates(existing);
     } else {
-      const avgSpeed = info.running_time > 0 ? info.item_num / info.running_time : 0;
-      this.nodeStats.set(info.node_id, {
+      const initialNode: NodeStats = {
         nodeId: info.node_id,
-        totalItemNum: info.item_num,
-        totalRunningTime: info.running_time,
+        totalItemNum: historyRecord.itemNum,
+        totalRunningTime: historyRecord.runningTime,
         recordCount: 1,
-        avgSpeed,
+        avgSpeed: speed,
         lastUpdated: now,
-      });
+        recentRecords: [historyRecord],
+      };
+      this.updateNodeAggregates(initialNode);
+      this.nodeStats.set(info.node_id, initialNode);
     }
   }
 
   getAllNodeStats(): NodeStats[] {
-    return [...this.nodeStats.values()].sort((a, b) => b.lastUpdated - a.lastUpdated);
+    this.pruneNodeStats(Date.now());
+    return [...this.nodeStats.values()]
+      .map((node) => ({
+        ...node,
+        recentRecords: [...node.recentRecords],
+      }))
+      .sort((a, b) => b.lastUpdated - a.lastUpdated);
+  }
+
+  clearNodeStats(): { cleared: number } {
+    const clearedCount = this.nodeStats.size;
+    this.nodeStats.clear();
+    return { cleared: clearedCount };
+  }
+
+  deleteNodeStats(nodeId: string): { deleted: boolean } {
+    const deleted = this.nodeStats.delete(nodeId);
+    return { deleted };
   }
 
   findTaskByIdOrPath(query: string): TaskRecord | null {
@@ -274,6 +310,25 @@ class TaskStore {
     }
 
     return null;
+  }
+
+  clearAllTasks(): { cleared: number } {
+    const clearedCount = this.tasks.size;
+    
+    // Clear all data structures
+    this.tasks.clear();
+    this.pathToTaskId.clear();
+    this.pendingQueue = [];
+    this.pendingSet.clear();
+    this.processingSet.clear();
+    this.processingStartedAt.clear();
+    this.completedSet.clear();
+    this.completedList = [];
+    this.failedSet.clear();
+    this.failedList = [];
+    // Note: We keep nodeStats as they represent historical statistics
+    
+    return { cleared: clearedCount };
   }
 
   listTasksByStatus(status: TaskStatus | "all", page: number, pageSize: number): PaginatedTasks {
@@ -402,6 +457,41 @@ class TaskStore {
     }
 
     return { tasks, total };
+  }
+
+  private pruneNodeStats(referenceTime: number) {
+    const retention = TaskStore.NODE_STAT_RETENTION_MS;
+    for (const [nodeId, stats] of [...this.nodeStats.entries()]) {
+      stats.recentRecords = stats.recentRecords
+        .filter((record) => referenceTime - record.timestamp <= retention)
+        .slice(-TaskStore.MAX_NODE_HISTORY);
+
+      if (stats.recentRecords.length === 0) {
+        this.nodeStats.delete(nodeId);
+        continue;
+      }
+
+      this.updateNodeAggregates(stats);
+
+      if (referenceTime - stats.lastUpdated > retention) {
+        this.nodeStats.delete(nodeId);
+      }
+    }
+  }
+
+  private updateNodeAggregates(stats: NodeStats) {
+    const totalItemNum = stats.recentRecords.reduce((sum, record) => sum + record.itemNum, 0);
+    const totalRunningTime = stats.recentRecords.reduce(
+      (sum, record) => sum + record.runningTime,
+      0,
+    );
+    const recordCount = stats.recentRecords.length;
+
+    stats.totalItemNum = totalItemNum;
+    stats.totalRunningTime = totalRunningTime;
+    stats.recordCount = recordCount;
+    stats.avgSpeed = totalRunningTime > 0 ? totalItemNum / totalRunningTime : 0;
+    stats.lastUpdated = stats.recentRecords.at(-1)?.timestamp ?? stats.lastUpdated;
   }
 }
 

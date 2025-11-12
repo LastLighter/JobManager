@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { getBatchSizeConfig } from "@/lib/batchSizeConfig";
 import { taskStore } from "@/lib/taskStore";
 
-const DEFAULT_BATCH_SIZE = Number.parseInt(process.env.TASK_BATCH_SIZE || "10", 10);
-const MAX_BATCH_SIZE = Number.parseInt(process.env.TASK_BATCH_MAX || "1000", 10);
-
 export async function POST(request: Request) {
-  const fallbackBatchSize = Number.isNaN(DEFAULT_BATCH_SIZE) ? 10 : DEFAULT_BATCH_SIZE;
-  const safeMaxBatchSize = Number.isNaN(MAX_BATCH_SIZE) ? 1000 : MAX_BATCH_SIZE;
+  const config = getBatchSizeConfig();
+  const fallbackBatchSize = config.defaultBatchSize;
+  const safeMaxBatchSize = config.maxBatchSize;
 
   let requestedBatchSize: number | undefined;
 
@@ -33,7 +32,8 @@ export async function POST(request: Request) {
 
 export async function GET() {
   // Provide a lightweight way to request tasks without a body.
-  const fallbackBatchSize = Number.isNaN(DEFAULT_BATCH_SIZE) ? 10 : DEFAULT_BATCH_SIZE;
+  const config = getBatchSizeConfig();
+  const fallbackBatchSize = config.defaultBatchSize;
   const tasks = taskStore.getTasksForProcessing(fallbackBatchSize);
 
   return NextResponse.json(
