@@ -27,7 +27,7 @@
 | `TASK_FAILURE_THRESHOLD` | `3` | 任务连续失败达到该值时，转入失败队列 |
 | `TASK_PAGE_SIZE` | `20` | 控制台接口默认分页大小 |
 | `TASK_PAGE_MAX` | `200` | 控制台接口允许的最大分页大小 |
-| `TASK_TIMEOUT_MS` | `300000` | 任务超时时间（毫秒），默认5分钟 |
+| `TASK_TIMEOUT_MS` | `900000` | 任务超时时间（毫秒），默认15分钟 |
 
 可以在根目录创建 `.env.local` 文件覆盖上述默认值：
 
@@ -105,7 +105,7 @@ curl "http://localhost:3000/api/tasks/search?query=/path/to/file1.pdf"
 # POST /api/tasks/check_timeout
 curl -X POST http://localhost:3000/api/tasks/check_timeout \
   -H "Content-Type: application/json" \
-  -d '{"timeoutMs": 300000}'
+  -d '{"timeoutMs": 900000}'
 ```
 
 > 本 Demo 使用内存存储以简化实现，若用于生产环境，请替换为持久化存储（如数据库、消息队列）并补充鉴权机制。

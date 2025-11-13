@@ -5,6 +5,7 @@ import { taskStore } from "@/lib/taskStore";
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const query = searchParams.get("query")?.trim();
+  const roundId = searchParams.get("roundId") ?? undefined;
 
   if (!query) {
     return NextResponse.json(
@@ -15,9 +16,9 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const task = taskStore.findTaskByIdOrPath(query);
+  const taskInfo = taskStore.findTaskByIdOrPath(query, roundId ?? undefined);
 
-  if (!task) {
+  if (!taskInfo) {
     return NextResponse.json(
       { error: "未找到匹配的任务", found: false },
       {
@@ -29,14 +30,15 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     found: true,
     task: {
-      id: task.id,
-      path: task.path,
-      status: task.status,
-      failureCount: task.failureCount,
-      message: task.message ?? "",
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt,
-      processingStartedAt: task.processingStartedAt ?? null,
+      id: taskInfo.task.id,
+      path: taskInfo.task.path,
+      status: taskInfo.task.status,
+      failureCount: taskInfo.task.failureCount,
+      message: taskInfo.task.message ?? "",
+      createdAt: taskInfo.task.createdAt,
+      updatedAt: taskInfo.task.updatedAt,
+      processingStartedAt: taskInfo.task.processingStartedAt ?? null,
+      roundId: taskInfo.roundId,
     },
   });
 }

@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 import { taskStore } from "@/lib/taskStore";
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ nodeId: string }> },
 ) {
   const { nodeId } = await params;
+  const roundId = request.nextUrl.searchParams.get("roundId") ?? undefined;
 
   if (!nodeId) {
     return NextResponse.json(
@@ -16,7 +17,7 @@ export async function DELETE(
     );
   }
 
-  const result = taskStore.deleteNodeStats(nodeId);
+  const result = taskStore.deleteNodeStats(nodeId, roundId);
 
   if (!result.deleted) {
     return NextResponse.json(
@@ -28,6 +29,7 @@ export async function DELETE(
   return NextResponse.json({
     success: true,
     nodeId,
+    roundId: roundId ?? null,
   });
 }
 

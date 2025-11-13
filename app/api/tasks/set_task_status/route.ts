@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { taskStore } from "@/lib/taskStore";
 
-const FAILURE_THRESHOLD = Number.parseInt(process.env.TASK_FAILURE_THRESHOLD || "3", 10);
+const FAILURE_THRESHOLD = Number.parseInt(process.env.TASK_FAILURE_THRESHOLD || "2", 10);
 
 interface TaskStatusPayload {
   task_id: string;
@@ -59,9 +59,12 @@ export async function POST(request: Request) {
     );
   }
 
+  const taskInfo = taskStore.findTaskByIdOrPath(payload.task_id);
+
   return NextResponse.json({
     task_id: payload.task_id,
     status: result.status,
+    round_id: taskInfo?.roundId ?? null,
   });
 }
 

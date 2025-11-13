@@ -8,13 +8,13 @@ interface BatchSizeConfig {
 
 // Initialize from environment variables
 const config: BatchSizeConfig = {
-  defaultBatchSize: Number.parseInt(process.env.TASK_BATCH_SIZE || "10", 10),
+  defaultBatchSize: Number.parseInt(process.env.TASK_BATCH_SIZE || "8", 10),
   maxBatchSize: Number.parseInt(process.env.TASK_BATCH_MAX || "1000", 10),
 };
 
 // Ensure valid values
 if (Number.isNaN(config.defaultBatchSize) || config.defaultBatchSize < 1) {
-  config.defaultBatchSize = 10;
+  config.defaultBatchSize = 8;
 }
 if (Number.isNaN(config.maxBatchSize) || config.maxBatchSize < 1) {
   config.maxBatchSize = 1000;

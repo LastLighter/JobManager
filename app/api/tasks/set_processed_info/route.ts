@@ -5,9 +5,21 @@ import { taskStore } from "@/lib/taskStore";
 
 export async function POST(request: Request) {
   let payload: ProcessedInfo;
+  let roundId: string | undefined;
 
   try {
-    payload = await request.json();
+    const body = await request.json();
+    roundId =
+      typeof body?.round_id === "string"
+        ? body.round_id.trim()
+        : typeof body?.roundId === "string"
+          ? body.roundId.trim()
+          : undefined;
+    payload = {
+      node_id: body?.node_id,
+      item_num: body?.item_num,
+      running_time: body?.running_time,
+    };
   } catch {
     return NextResponse.json(
       { error: "请求体必须是有效的JSON" },
@@ -44,11 +56,12 @@ export async function POST(request: Request) {
     );
   }
 
-  taskStore.recordNodeProcessedInfo(payload);
+  taskStore.recordNodeProcessedInfo(payload, roundId);
 
   return NextResponse.json({
     success: true,
     node_id: payload.node_id,
+    round_id: roundId ?? null,
   });
 }
 

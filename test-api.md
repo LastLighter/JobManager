@@ -123,10 +123,10 @@ curl "http://localhost:3000/api/tasks/search?query=/data/file1.pdf"
 ## 7. 检查并重置超时任务
 
 ```bash
-# 检查超过5分钟的超时任务
+# 检查超过15分钟的超时任务
 curl -X POST http://localhost:3000/api/tasks/check_timeout \
   -H "Content-Type: application/json" \
-  -d '{"timeoutMs": 300000}'
+  -d '{"timeoutMs": 900000}'
 
 # 检查超过1分钟的超时任务（测试用）
 curl -X POST http://localhost:3000/api/tasks/check_timeout \
@@ -137,7 +137,7 @@ curl -X POST http://localhost:3000/api/tasks/check_timeout \
 # {
 #   "success": true,
 #   "requeuedCount": 3,
-#   "timeoutMs": 300000
+#   "timeoutMs": 900000
 # }
 ```
 
