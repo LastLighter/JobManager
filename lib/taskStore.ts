@@ -14,6 +14,7 @@ export interface TaskRecord {
   createdAt: number;
   updatedAt: number;
   processingStartedAt?: number;
+  processingNodeId?: string;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -115,6 +116,9 @@ export interface NodeStats {
   avgSpeed: number; // items per second
   lastUpdated: number;
   recentRecords: NodePerformanceRecord[];
+  requestCount: number;
+  assignedTaskCount: number;
+  activeTaskIds: string[];
 }
 
 export interface NodeStatsSummary {
@@ -125,6 +129,9 @@ export interface NodeStatsSummary {
   averageSpeed: number | null;
   averageRunningTime: number | null;
   averageItemNum: number | null;
+  totalRequests: number;
+  totalAssignedTasks: number;
+  totalActiveTasks: number;
 }
 
 export interface ProcessedInfo {
@@ -157,6 +164,7 @@ export interface TimeoutInspectionTaskInfo {
   status: TaskStatus;
   startedAt: number;
   durationMs: number;
+  nodeId: string | null;
 }
 
 export interface TimeoutInspectionSummary {
@@ -229,6 +237,7 @@ class SingleRoundStore {
 
   // Node statistics
   private nodeStats = new Map<string, NodeStats>();
+  private nodeActiveTasks = new Map<string, Set<string>>();
   private static readonly MAX_NODE_HISTORY = 60;
   private static readonly NODE_STAT_RETENTION_MS = 2 * 60 * 60 * 1000;
 
@@ -294,7 +303,12 @@ class SingleRoundStore {
     return { added, skipped, addedTaskIds };
   }
 
-  getTasksForProcessing(batchSize: number): TaskRecord[] {
+  getTasksForProcessing(batchSize: number, nodeId?: string): TaskRecord[] {
+    const normalizedNodeId = typeof nodeId === "string" && nodeId.trim() !== "" ? nodeId.trim() : undefined;
+    if (normalizedNodeId) {
+      this.recordNodeRequest(normalizedNodeId);
+    }
+
     const results: TaskRecord[] = [];
 
     while (results.length < batchSize) {
@@ -311,6 +325,11 @@ class SingleRoundStore {
       task.status = "processing";
       task.processingStartedAt = Date.now();
       task.updatedAt = task.processingStartedAt;
+      if (normalizedNodeId) {
+        task.processingNodeId = normalizedNodeId;
+      } else {
+        task.processingNodeId = undefined;
+      }
 
       this.processingSet.add(task.id);
       this.processingStartedAt.set(task.id, task.processingStartedAt);
@@ -318,19 +337,29 @@ class SingleRoundStore {
       results.push({ ...task });
     }
 
+    if (normalizedNodeId) {
+      this.recordNodeAssignment(
+        normalizedNodeId,
+        results.map((task) => task.id),
+      );
+    }
+
     return results;
   }
 
-  updateTaskStatus(taskId: string, success: boolean, message: string, failureThreshold: number) {
+  updateTaskStatus(taskId: string, success: boolean, message: string) {
     const task = this.tasks.get(taskId);
 
     if (!task) {
       return { ok: false as const, reason: "TASK_NOT_FOUND" as const };
     }
 
+    const previousNodeId = task.processingNodeId;
+
     this.processingSet.delete(taskId);
     this.processingStartedAt.delete(taskId);
     this.pendingSet.delete(taskId);
+    this.detachTaskFromNode(taskId, previousNodeId);
 
     if (task.status === "completed" && !success) {
       return { ok: true as const, status: task.status };
@@ -343,6 +372,9 @@ class SingleRoundStore {
       task.status = "completed";
       task.failureCount = 0;
       task.processingStartedAt = undefined;
+      if (this.failedSet.delete(taskId)) {
+        this.failedList = this.failedList.filter((id) => id !== taskId);
+      }
 
       if (!this.completedSet.has(taskId)) {
         this.completedSet.add(taskId);
@@ -354,18 +386,11 @@ class SingleRoundStore {
 
     task.failureCount += 1;
     task.processingStartedAt = undefined;
-
-    if (task.failureCount >= failureThreshold) {
-      task.status = "failed";
-      if (!this.failedSet.has(taskId)) {
-        this.failedSet.add(taskId);
-        this.failedList.unshift(taskId);
-      }
-      return { ok: true as const, status: task.status };
+    task.status = "failed";
+    if (!this.failedSet.has(taskId)) {
+      this.failedSet.add(taskId);
+      this.failedList.unshift(taskId);
     }
-
-    task.status = "pending";
-    this.enqueuePending(taskId);
 
     return { ok: true as const, status: task.status };
   }
@@ -380,6 +405,7 @@ class SingleRoundStore {
 
       task.status = "pending";
       task.processingStartedAt = undefined;
+      this.detachTaskFromNode(taskId);
       this.enqueuePending(taskId);
       this.processingSet.delete(taskId);
       this.processingStartedAt.delete(taskId);
@@ -396,9 +422,9 @@ class SingleRoundStore {
     };
   }
 
-  checkAndRequeueTimedOutTasks(timeoutMs: number): number {
+  markTimedOutTasksAsFailed(timeoutMs: number): number {
     const now = Date.now();
-    let requeuedCount = 0;
+    let failedCount = 0;
 
     for (const taskId of [...this.processingSet]) {
       const task = this.tasks.get(taskId);
@@ -409,17 +435,27 @@ class SingleRoundStore {
       }
 
       if (now - startedAt > timeoutMs) {
-        task.status = "pending";
-        task.processingStartedAt = undefined;
-        task.updatedAt = now;
-        this.enqueuePending(taskId);
         this.processingSet.delete(taskId);
         this.processingStartedAt.delete(taskId);
-        requeuedCount += 1;
+        this.pendingSet.delete(taskId);
+        this.detachTaskFromNode(taskId);
+
+        task.status = "failed";
+        task.processingStartedAt = undefined;
+        task.updatedAt = now;
+        task.failureCount += 1;
+        if (!task.message || task.message.length === 0) {
+          task.message = "任务超时失败";
+        }
+        if (!this.failedSet.has(taskId)) {
+          this.failedSet.add(taskId);
+          this.failedList.unshift(taskId);
+        }
+        failedCount += 1;
       }
     }
 
-    return requeuedCount;
+    return failedCount;
   }
 
   inspectProcessingTasks(timeoutMs: number): TimeoutInspectionSummary {
@@ -443,6 +479,7 @@ class SingleRoundStore {
         status: task.status,
         startedAt,
         durationMs,
+        nodeId: task.processingNodeId ?? null,
       });
     }
 
@@ -486,25 +523,13 @@ class SingleRoundStore {
       speed,
     };
 
-    const existing = this.nodeStats.get(info.node_id);
-    if (existing) {
-      existing.recentRecords = [...existing.recentRecords, historyRecord]
-        .filter((record) => now - record.timestamp <= SingleRoundStore.NODE_STAT_RETENTION_MS)
-        .slice(-SingleRoundStore.MAX_NODE_HISTORY);
-      this.updateNodeAggregates(existing);
-    } else {
-      const initialNode: NodeStats = {
-        nodeId: info.node_id,
-        totalItemNum: historyRecord.itemNum,
-        totalRunningTime: historyRecord.runningTime,
-        recordCount: 1,
-        avgSpeed: speed,
-        lastUpdated: now,
-        recentRecords: [historyRecord],
-      };
-      this.updateNodeAggregates(initialNode);
-      this.nodeStats.set(info.node_id, initialNode);
-    }
+    const nodeStats = this.getOrCreateNodeStats(info.node_id, now);
+    nodeStats.recentRecords = [...nodeStats.recentRecords, historyRecord]
+      .filter((record) => now - record.timestamp <= SingleRoundStore.NODE_STAT_RETENTION_MS)
+      .slice(-SingleRoundStore.MAX_NODE_HISTORY);
+    nodeStats.lastUpdated = now;
+    this.updateNodeAggregates(nodeStats);
+    this.updateNodeActiveSnapshot(info.node_id);
 
     this.totalProcessedItemNum += info.item_num;
     this.totalProcessedRunningTime += info.running_time;
@@ -513,22 +538,29 @@ class SingleRoundStore {
 
   getAllNodeStats(): NodeStats[] {
     this.pruneNodeStats(Date.now());
-    return [...this.nodeStats.values()]
-      .map((node) => ({
-        ...node,
-        recentRecords: [...node.recentRecords],
-      }))
+    return [...this.nodeStats.entries()]
+      .map(([nodeId, node]) => {
+        this.updateNodeActiveSnapshot(nodeId);
+        const activeSet = this.nodeActiveTasks.get(nodeId);
+        return {
+          ...node,
+          activeTaskIds: activeSet ? [...activeSet] : [...node.activeTaskIds],
+          recentRecords: [...node.recentRecords],
+        };
+      })
       .sort((a, b) => b.lastUpdated - a.lastUpdated);
   }
 
   clearNodeStats(): { cleared: number } {
     const clearedCount = this.nodeStats.size;
     this.nodeStats.clear();
+    this.nodeActiveTasks.clear();
     return { cleared: clearedCount };
   }
 
   deleteNodeStats(nodeId: string): { deleted: boolean } {
     const deleted = this.nodeStats.delete(nodeId);
+    this.nodeActiveTasks.delete(nodeId);
     return { deleted };
   }
 
@@ -566,6 +598,10 @@ class SingleRoundStore {
     this.failedSet.clear();
     this.failedList = [];
     // Note: We keep nodeStats as they represent historical statistics
+    this.nodeActiveTasks.clear();
+    for (const stats of this.nodeStats.values()) {
+      stats.activeTaskIds = [];
+    }
 
     this.totalProcessedItemNum = 0;
     this.totalProcessedRunningTime = 0;
@@ -690,6 +726,89 @@ class SingleRoundStore {
     };
   }
 
+  private getOrCreateNodeStats(nodeId: string, referenceTime = Date.now()): NodeStats {
+    const existing = this.nodeStats.get(nodeId);
+    if (existing) {
+      if (!Array.isArray(existing.activeTaskIds)) {
+        const activeSet = this.nodeActiveTasks.get(nodeId);
+        existing.activeTaskIds = activeSet ? [...activeSet] : [];
+      }
+      return existing;
+    }
+
+    const initial: NodeStats = {
+      nodeId,
+      totalItemNum: 0,
+      totalRunningTime: 0,
+      recordCount: 0,
+      avgSpeed: 0,
+      lastUpdated: referenceTime,
+      recentRecords: [],
+      requestCount: 0,
+      assignedTaskCount: 0,
+      activeTaskIds: [],
+    };
+    this.nodeStats.set(nodeId, initial);
+    return initial;
+  }
+
+  private ensureNodeActiveSet(nodeId: string): Set<string> {
+    let active = this.nodeActiveTasks.get(nodeId);
+    if (!active) {
+      active = new Set<string>();
+      this.nodeActiveTasks.set(nodeId, active);
+    }
+    return active;
+  }
+
+  private updateNodeActiveSnapshot(nodeId: string) {
+    const active = this.nodeActiveTasks.get(nodeId);
+    const stats = this.nodeStats.get(nodeId);
+    if (stats) {
+      stats.activeTaskIds = active ? [...active] : [];
+    }
+  }
+
+  private detachTaskFromNode(taskId: string, explicitNodeId?: string) {
+    const task = this.tasks.get(taskId);
+    const nodeId = explicitNodeId ?? task?.processingNodeId;
+    if (task) {
+      task.processingNodeId = undefined;
+    }
+    if (!nodeId) {
+      return;
+    }
+    const activeSet = this.nodeActiveTasks.get(nodeId);
+    if (activeSet) {
+      activeSet.delete(taskId);
+      if (activeSet.size === 0) {
+        this.nodeActiveTasks.delete(nodeId);
+      }
+    }
+    this.updateNodeActiveSnapshot(nodeId);
+  }
+
+  private recordNodeRequest(nodeId: string) {
+    const stats = this.getOrCreateNodeStats(nodeId);
+    stats.requestCount += 1;
+    stats.lastUpdated = Date.now();
+  }
+
+  private recordNodeAssignment(nodeId: string, taskIds: string[]) {
+    if (taskIds.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    const stats = this.getOrCreateNodeStats(nodeId, now);
+    stats.assignedTaskCount += taskIds.length;
+    const activeSet = this.ensureNodeActiveSet(nodeId);
+    for (const taskId of taskIds) {
+      activeSet.add(taskId);
+    }
+    stats.lastUpdated = now;
+    this.updateNodeActiveSnapshot(nodeId);
+  }
+
   private enqueuePending(id: string) {
     if (this.pendingSet.has(id)) {
       return;
@@ -798,10 +917,15 @@ class SingleRoundStore {
       processingStartedAt: [...this.processingStartedAt.entries()],
       completedList: [...this.completedList],
       failedList: [...this.failedList],
-      nodeStats: [...this.nodeStats.values()].map((node) => ({
-        ...node,
-        recentRecords: [...node.recentRecords],
-      })),
+      nodeStats: [...this.nodeStats.entries()].map(([nodeId, node]) => {
+        this.updateNodeActiveSnapshot(nodeId);
+        const active = this.nodeActiveTasks.get(nodeId);
+        return {
+          ...node,
+          activeTaskIds: active ? [...active] : [...node.activeTaskIds],
+          recentRecords: [...node.recentRecords],
+        };
+      }),
       totalProcessedItemNum: this.totalProcessedItemNum,
       totalProcessedRunningTime: this.totalProcessedRunningTime,
       lastProcessedAt: this.lastProcessedAt,
@@ -823,13 +947,24 @@ class SingleRoundStore {
     store.failedSet = new Set(snapshot.failedList);
     store.failedList = snapshot.failedList.filter(Boolean);
     store.nodeStats = new Map(
-      snapshot.nodeStats.map((node) => [
-        node.nodeId,
-        {
-          ...node,
-          recentRecords: [...node.recentRecords],
-        },
-      ]),
+      snapshot.nodeStats.map((node) => {
+        const requestCount = Number.isFinite(node.requestCount) ? node.requestCount : 0;
+        const assignedTaskCount = Number.isFinite(node.assignedTaskCount) ? node.assignedTaskCount : 0;
+        const activeTaskIds = Array.isArray(node.activeTaskIds) ? [...node.activeTaskIds] : [];
+        return [
+          node.nodeId,
+          {
+            ...node,
+            requestCount,
+            assignedTaskCount,
+            activeTaskIds,
+            recentRecords: [...node.recentRecords],
+          },
+        ] as const;
+      }),
+    );
+    store.nodeActiveTasks = new Map(
+      [...store.nodeStats.values()].map((node) => [node.nodeId, new Set(node.activeTaskIds)]),
     );
 
     for (const task of snapshot.tasks) {
@@ -876,15 +1011,22 @@ class SingleRoundStore {
         .filter((record) => referenceTime - record.timestamp <= retention)
         .slice(-SingleRoundStore.MAX_NODE_HISTORY);
 
-      if (stats.recentRecords.length === 0) {
+      this.updateNodeAggregates(stats);
+      this.updateNodeActiveSnapshot(nodeId);
+      const activeSet = this.nodeActiveTasks.get(nodeId);
+
+      if (
+        stats.recentRecords.length === 0 &&
+        (!activeSet || activeSet.size === 0)
+      ) {
         this.nodeStats.delete(nodeId);
+        this.nodeActiveTasks.delete(nodeId);
         continue;
       }
 
-      this.updateNodeAggregates(stats);
-
-      if (referenceTime - stats.lastUpdated > retention) {
+      if (referenceTime - stats.lastUpdated > retention && (!activeSet || activeSet.size === 0)) {
         this.nodeStats.delete(nodeId);
+        this.nodeActiveTasks.delete(nodeId);
       }
     }
   }
@@ -1131,9 +1273,6 @@ class TaskStore {
       if (entry) {
         this.refreshRoundStatus(entry);
         if (entry.status !== "completed") {
-          if (entry.status !== "active") {
-            this.setActiveRound(entry.id);
-          }
           return entry;
         }
         this.activeRoundId = null;
@@ -1148,9 +1287,6 @@ class TaskStore {
       this.refreshRoundStatus(entry);
       if (entry.status === "completed") {
         continue;
-      }
-      if (entry.status !== "active") {
-        this.setActiveRound(entry.id);
       }
       return entry;
     }
@@ -1176,13 +1312,24 @@ class TaskStore {
       if (entry.store) {
         this.persistRoundEntry(entry, { unload: true, deregister: true });
       }
-    } else if (entry.id === this.activeRoundId) {
-      entry.status = "active";
-    } else if (entry.status === "completed") {
-      entry.status = "pending";
+      return entry.status;
+    }
+
+    const shouldBeActive = counts.pending > 0 || counts.processing > 0;
+
+    if (shouldBeActive) {
+      if (entry.status !== "active") {
+        entry.status = "active";
+        entry.activatedAt = entry.activatedAt ?? Date.now();
+      }
       entry.completedAt = null;
-    } else if (entry.status === "active") {
-      entry.status = "pending";
+    } else {
+      if (entry.status === "active") {
+        entry.status = "pending";
+      } else if (entry.status === "completed") {
+        entry.status = "pending";
+        entry.completedAt = null;
+      }
     }
     return entry.status;
   }
@@ -1212,6 +1359,22 @@ class TaskStore {
     entry.status = "active";
     entry.activatedAt = entry.activatedAt ?? Date.now();
     entry.completedAt = null;
+    return entry;
+  }
+
+  private prepareRoundForProcessing(entry: RoundEntry): RoundEntry | null {
+    const store = this.ensureStoreLoaded(entry, { keepLoaded: true, registerTasks: true });
+    if (!store) {
+      return null;
+    }
+    if (entry.status !== "active") {
+      entry.status = "active";
+      entry.activatedAt = entry.activatedAt ?? Date.now();
+    }
+    entry.completedAt = null;
+    if (!this.activeRoundId) {
+      this.activeRoundId = entry.id;
+    }
     return entry;
   }
 
@@ -1398,43 +1561,83 @@ class TaskStore {
     }
   }
 
-  getTasksForProcessing(batchSize: number, roundId?: string): TaskRecord[] {
-    const entry = this.getEntry(roundId);
-    if (!entry) {
-      return [];
-    }
-    if (entry.status === "completed") {
-      return [];
-    }
-    const activated = this.setActiveRoundInternal(entry.id);
-    if (!activated) {
-      return [];
+  getTasksForProcessing(batchSize: number, roundId?: string, nodeId?: string): TaskRecord[] {
+    const safeBatchSize = Math.max(1, Math.floor(batchSize));
+    const collected: TaskRecord[] = [];
+    const processedRounds = new Set<string>();
+
+    const fetchFromEntry = (entry: RoundEntry | null, limit: number) => {
+      if (!entry || processedRounds.has(entry.id)) {
+        return;
+      }
+      this.refreshRoundStatus(entry);
+      if (entry.status === "completed") {
+        return;
+      }
+      const prepared = this.prepareRoundForProcessing(entry);
+      if (!prepared) {
+        return;
+      }
+      if (limit <= 0) {
+        processedRounds.add(entry.id);
+        return;
+      }
+      const tasks = this.withRoundStore(
+        prepared,
+        (store) => {
+          const fetched = store.getTasksForProcessing(limit, nodeId);
+          if (fetched.length > 0) {
+            prepared.isDirty = true;
+          }
+          return fetched;
+        },
+        { keepLoaded: true, registerTasks: true },
+      );
+      for (const task of tasks) {
+        this.taskIdToRoundId.set(task.id, prepared.id);
+      }
+      this.refreshRoundStatus(prepared);
+      collected.push(...tasks);
+      processedRounds.add(prepared.id);
+      if (tasks.length > 0) {
+        this.activeRoundId = prepared.id;
+      }
+    };
+
+    if (roundId) {
+      const entry = this.rounds.get(roundId);
+      fetchFromEntry(entry ?? null, safeBatchSize);
+      return collected.slice(0, safeBatchSize);
     }
 
-    const tasks = this.withRoundStore(
-      entry,
-      (store) => {
-        const fetched = store.getTasksForProcessing(batchSize);
-        if (fetched.length > 0) {
-          entry.isDirty = true;
-        }
-        return fetched;
-      },
-      { keepLoaded: true, registerTasks: true },
-    );
-
-    for (const task of tasks) {
-      this.taskIdToRoundId.set(task.id, entry.id);
+    const activeEntry = this.ensureActiveRound();
+    if (activeEntry) {
+      fetchFromEntry(activeEntry, safeBatchSize - collected.length);
     }
-    this.refreshRoundStatus(entry);
-    return tasks;
+
+    if (collected.length >= safeBatchSize) {
+      return collected.slice(0, safeBatchSize);
+    }
+
+    for (const roundKey of this.roundOrder) {
+      if (collected.length >= safeBatchSize) {
+        break;
+      }
+      const entry = this.rounds.get(roundKey);
+      if (!entry || processedRounds.has(entry.id)) {
+        continue;
+      }
+      const remaining = safeBatchSize - collected.length;
+      fetchFromEntry(entry, remaining);
+    }
+
+    return collected.slice(0, safeBatchSize);
   }
 
   updateTaskStatus(
     taskId: string,
     success: boolean,
     message: string,
-    failureThreshold: number,
   ): { ok: true; status: TaskStatus } | { ok: false; reason: "TASK_NOT_FOUND" } {
     const roundId = this.taskIdToRoundId.get(taskId);
     if (!roundId) {
@@ -1449,7 +1652,7 @@ class TaskStore {
       const result = this.withRoundStore(
         entry,
         (store) => {
-          const outcome = store.updateTaskStatus(taskId, success, message, failureThreshold);
+          const outcome = store.updateTaskStatus(taskId, success, message);
           if (outcome.ok) {
             entry.isDirty = true;
           } else if (outcome.reason === "TASK_NOT_FOUND") {
@@ -1467,7 +1670,7 @@ class TaskStore {
     }
   }
 
-  checkAndRequeueTimedOutTasks(timeoutMs: number, roundId?: string): number {
+  failTimedOutTasks(timeoutMs: number, roundId?: string): number {
     if (roundId) {
       const entry = this.rounds.get(roundId);
       if (!entry) return 0;
@@ -1476,11 +1679,11 @@ class TaskStore {
         const count = this.withRoundStore(
           entry,
           (store) => {
-            const requeued = store.checkAndRequeueTimedOutTasks(timeoutMs);
-            if (requeued > 0) {
+            const failed = store.markTimedOutTasksAsFailed(timeoutMs);
+            if (failed > 0) {
               entry.isDirty = true;
             }
-            return requeued;
+            return failed;
           },
           { keepLoaded, registerTasks: keepLoaded },
         );
@@ -1499,11 +1702,11 @@ class TaskStore {
         const count = this.withRoundStore(
           entry,
           (store) => {
-            const requeued = store.checkAndRequeueTimedOutTasks(timeoutMs);
-            if (requeued > 0) {
+            const failed = store.markTimedOutTasksAsFailed(timeoutMs);
+            if (failed > 0) {
               entry.isDirty = true;
             }
-            return requeued;
+            return failed;
           },
           { keepLoaded, registerTasks: keepLoaded },
         );
@@ -1651,6 +1854,9 @@ class TaskStore {
           const totalItemNum = stats.reduce((sum, node) => sum + node.totalItemNum, 0);
           const totalRunningTime = stats.reduce((sum, node) => sum + node.totalRunningTime, 0);
           const recordCount = stats.reduce((sum, node) => sum + node.recordCount, 0);
+          const totalRequests = stats.reduce((sum, node) => sum + node.requestCount, 0);
+          const totalAssignedTasks = stats.reduce((sum, node) => sum + node.assignedTaskCount, 0);
+          const totalActiveTasks = stats.reduce((sum, node) => sum + node.activeTaskIds.length, 0);
           const averageSpeed =
             totalRunningTime > 0 ? totalItemNum / totalRunningTime : nodeCount > 0 ? 0 : null;
           const averageRunningTime =
@@ -1666,6 +1872,9 @@ class TaskStore {
             averageSpeed,
             averageRunningTime,
             averageItemNum,
+            totalRequests,
+            totalAssignedTasks,
+            totalActiveTasks,
           };
         },
         { keepLoaded, registerTasks: keepLoaded },

@@ -20,11 +20,11 @@ export async function POST(request: NextRequest) {
     // Use default timeout
   }
 
-  const requeuedCount = taskStore.checkAndRequeueTimedOutTasks(timeoutMs, roundId);
+  const failedCount = taskStore.failTimedOutTasks(timeoutMs, roundId);
 
   return NextResponse.json({
     success: true,
-    requeuedCount,
+    failedCount,
     timeoutMs,
     roundId: roundId ?? null,
   });

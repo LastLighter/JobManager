@@ -33,6 +33,7 @@ export interface TimeoutInspectionTaskInfo {
   status: TaskStatus;
   startedAt: number;
   durationMs: number;
+  nodeId: string | null;
 }
 
 export interface TimeoutInspectionRoundSummary {
@@ -84,6 +85,7 @@ export interface TaskItem {
   updatedAt: number;
   createdAt: number;
   processingStartedAt: number | null;
+  processingNodeId: string | null;
 }
 
 export interface RunStats {
@@ -134,6 +136,10 @@ export interface NodeStatsItem {
   avgSpeed: number;
   lastUpdated: number;
   recentRecords: NodePerformanceRecordItem[];
+  requestCount: number;
+  assignedTaskCount: number;
+  activeTaskCount: number;
+  activeTaskIds: string[];
 }
 
 export interface NodeStatsSummary {
@@ -144,6 +150,9 @@ export interface NodeStatsSummary {
   averageSpeed: number | null;
   averageRunningTime: number | null;
   averageItemNum: number | null;
+  totalRequests: number;
+  totalAssignedTasks: number;
+  totalActiveTasks: number;
 }
 
 export interface AggregatedPerformanceRecord {

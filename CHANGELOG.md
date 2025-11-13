@@ -104,7 +104,6 @@ useEffect(() => {
 ```bash
 TASK_BATCH_SIZE=10          # 每批分配任务数
 TASK_BATCH_MAX=1000         # 最大批次大小
-TASK_FAILURE_THRESHOLD=3    # 失败重试次数
 TASK_TIMEOUT_MS=900000      # 超时时间（毫秒）
 TASK_PAGE_SIZE=20           # 分页大小
 TASK_PAGE_MAX=200           # 最大分页大小

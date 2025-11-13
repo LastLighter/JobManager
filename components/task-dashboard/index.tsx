@@ -4,7 +4,6 @@ import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  NAV_SECTIONS,
   ROUND_PAGE_SIZE_OPTIONS,
   ROUND_STATUS_BADGES,
   ROUND_STATUS_LABELS,
@@ -254,8 +253,8 @@ export function TaskDashboard() {
 
       if (response.ok) {
         const result = await response.json();
-        if (result.requeuedCount > 0) {
-          console.log(`自动检查（${selectedRoundDisplayName}）：已将 ${result.requeuedCount} 个超时任务重新加入队列`);
+        if (result.failedCount > 0) {
+          console.log(`自动检查（${selectedRoundDisplayName}）：已将 ${result.failedCount} 个超时任务标记为失败`);
           // Silently refresh the summary
           await fetchSummary({ keepPage: true, keepRoundPage: true });
         }
@@ -727,21 +726,8 @@ export function TaskDashboard() {
     <>
       {selectedNode && <NodeDetailModal node={selectedNode} onClose={handleCloseNodeDetails} />}
       <div className="min-h-screen bg-slate-50 py-10">
-        <div className="mx-auto flex w-full max-w-7xl gap-8 px-6">
-          <aside className="sticky top-24 hidden h-fit w-56 shrink-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:flex lg:flex-col">
-            <nav className="flex flex-col gap-1 text-sm text-slate-600">
-              {NAV_SECTIONS.map((section) => (
-                <a
-                  key={section.id}
-                  href={`#${section.id}`}
-                  className="rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-900"
-                >
-                  {section.label}
-                </a>
-              ))}
-            </nav>
-          </aside>
-          <main className="flex-1 flex flex-col gap-8">
+        <div className="mx-auto w-full max-w-7xl px-6">
+          <main className="flex flex-col gap-8">
             <header id="overview" className="scroll-mt-24 flex flex-col gap-2">
               <h1 className="text-3xl font-semibold text-slate-900">任务调度管理系统</h1>
               <p className="text-sm text-slate-600">支持批量导入文件路径，分配任务执行节点，并实时监控任务状态。</p>
@@ -1019,6 +1005,12 @@ export function TaskDashboard() {
                       <span className="text-slate-900">{searchResult.failureCount}</span>
                     </div>
                     <div className="flex justify-between">
+                      <span className="font-medium text-slate-600">执行节点:</span>
+                      <span className="font-mono text-slate-900">
+                        {searchResult.processingNodeId ?? "-"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
                       <span className="font-medium text-slate-600">更新时间:</span>
                       <span className="text-slate-900">{formatDate(searchResult.updatedAt)}</span>
                     </div>
@@ -1066,7 +1058,7 @@ export function TaskDashboard() {
                     />
                     <span className="text-sm text-slate-600">分钟</span>
                   </div>
-                  <p className="text-xs text-slate-500">超过此时间的“处理中”任务将自动重新加入未处理队列</p>
+                  <p className="text-xs text-slate-500">超过此时间的“处理中”任务将自动标记为失败</p>
                 </label>
                 <label className="flex flex-col gap-2">
                   <span className="text-sm font-medium text-slate-700">检查间隔</span>
@@ -1131,6 +1123,9 @@ export function TaskDashboard() {
 
                 {nodeStatsSummary && (
                   <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <NodeSummaryTile label="总请求次数" value={formatNumber(nodeStatsSummary.totalRequests)} />
+                    <NodeSummaryTile label="已分配任务" value={formatNumber(nodeStatsSummary.totalAssignedTasks)} />
+                    <NodeSummaryTile label="进行中任务" value={formatNumber(nodeStatsSummary.totalActiveTasks)} />
                     <NodeSummaryTile label="总处理项数" value={formatNumber(nodeStatsSummary.totalItemNum)} />
                     <NodeSummaryTile label="总运行时间" value={formatSeconds(nodeStatsSummary.totalRunningTime)} />
                     <NodeSummaryTile label="平均速度" value={formatSpeed(nodeStatsSummary.averageSpeed, "项/秒")} />
@@ -1160,6 +1155,9 @@ export function TaskDashboard() {
                       <thead className="bg-slate-100 text-xs uppercase text-slate-500">
                         <tr>
                           <th className="px-4 py-3">节点ID</th>
+                          <th className="px-4 py-3">请求次数</th>
+                          <th className="px-4 py-3">已分配任务</th>
+                          <th className="px-4 py-3">进行中任务</th>
                           <th className="px-4 py-3">总处理量</th>
                           <th className="px-4 py-3">总运行时间 (秒)</th>
                           <th className="px-4 py-3">记录次数</th>
@@ -1177,6 +1175,33 @@ export function TaskDashboard() {
                           return (
                             <tr key={node.nodeId} className="hover:bg-slate-50">
                               <td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{node.nodeId}</td>
+                                <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
+                                <td className="px-4 py-3">{node.assignedTaskCount.toLocaleString()}</td>
+                                <td className="px-4 py-3">
+                                  {node.activeTaskCount === 0 ? (
+                                    "0"
+                                  ) : (
+                                    <div className="flex flex-col gap-1 text-xs">
+                                      <span>{node.activeTaskCount.toLocaleString()}</span>
+                                      <div className="flex flex-wrap gap-1">
+                                        {node.activeTaskIds.slice(0, 3).map((taskId) => (
+                                          <span
+                                            key={taskId}
+                                            className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600"
+                                            title={taskId}
+                                          >
+                                            {taskId}
+                                          </span>
+                                        ))}
+                                        {node.activeTaskIds.length > 3 && (
+                                          <span className="text-[10px] text-slate-400">
+                                            +{node.activeTaskIds.length - 3}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </td>
                               <td className="px-4 py-3">{node.totalItemNum.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
                               <td className="px-4 py-3">{node.recordCount}</td>
@@ -1403,6 +1428,7 @@ export function TaskDashboard() {
                       <th className="w-36 px-4 py-3">任务轮</th>
                       <th className="w-64 px-4 py-3">文件路径</th>
                       <th className="w-24 px-4 py-3">状态</th>
+                      <th className="w-36 px-4 py-3">执行节点</th>
                       <th className="w-20 px-4 py-3">失败次数</th>
                       <th className="w-44 px-4 py-3">更新时间</th>
                       <th className="px-4 py-3">备注</th>
@@ -1411,7 +1437,7 @@ export function TaskDashboard() {
                   <tbody className="divide-y divide-slate-100">
                     {currentTasks.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-500">
+                          <td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500">
                           {loading ? "加载中..." : "暂无数据"}
                         </td>
                       </tr>
@@ -1455,6 +1481,15 @@ export function TaskDashboard() {
                             <span className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${statusBadgeStyles[task.status]}`}>
                               {STATUS_OPTIONS.find((o) => o.value === task.status)?.label}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-600">
+                            {task.processingNodeId ? (
+                              <span className="font-mono" title={task.processingNodeId}>
+                                {task.processingNodeId}
+                              </span>
+                            ) : (
+                              "-"
+                            )}
                           </td>
                           <td className="px-4 py-3 text-center">{task.failureCount}</td>
                           <td className="px-4 py-3 text-xs">{formatDate(task.updatedAt)}</td>

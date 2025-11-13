@@ -136,7 +136,7 @@ curl -X POST http://localhost:3000/api/tasks/check_timeout \
 # 响应示例:
 # {
 #   "success": true,
-#   "requeuedCount": 3,
+#   "failedCount": 3,
 #   "timeoutMs": 900000
 # }
 ```

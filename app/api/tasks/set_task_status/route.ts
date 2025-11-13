@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 
 import { taskStore } from "@/lib/taskStore";
 
-const FAILURE_THRESHOLD = Number.parseInt(process.env.TASK_FAILURE_THRESHOLD || "2", 10);
-
 interface TaskStatusPayload {
   task_id: string;
   status: boolean;
@@ -42,12 +40,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const failureThreshold = Number.isNaN(FAILURE_THRESHOLD) ? 3 : FAILURE_THRESHOLD;
   const result = taskStore.updateTaskStatus(
     payload.task_id,
     payload.status,
     payload.message ?? "",
-    failureThreshold,
   );
 
   if (!result.ok) {

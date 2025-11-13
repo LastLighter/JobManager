@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
       avgSpeed: node.avgSpeed,
       lastUpdated: node.lastUpdated,
       recentRecords: node.recentRecords,
+      requestCount: node.requestCount,
+      assignedTaskCount: node.assignedTaskCount,
+      activeTaskCount: node.activeTaskIds.length,
+      activeTaskIds: node.activeTaskIds,
     })),
     summary: summary ?? {
       nodeCount: 0,
@@ -25,6 +29,9 @@ export async function GET(request: NextRequest) {
       averageSpeed: null,
       averageRunningTime: null,
       averageItemNum: null,
+      totalRequests: 0,
+      totalAssignedTasks: 0,
+      totalActiveTasks: 0,
     },
     roundId: roundId ?? null,
   });

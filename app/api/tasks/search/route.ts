@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       createdAt: taskInfo.task.createdAt,
       updatedAt: taskInfo.task.updatedAt,
       processingStartedAt: taskInfo.task.processingStartedAt ?? null,
+      processingNodeId: taskInfo.task.processingNodeId ?? null,
       roundId: taskInfo.roundId,
     },
   });

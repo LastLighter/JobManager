@@ -102,6 +102,7 @@ export async function GET(request: NextRequest) {
       updatedAt: task.updatedAt,
       createdAt: task.createdAt,
       processingStartedAt: task.processingStartedAt ?? null,
+      processingNodeId: task.processingNodeId ?? null,
     })),
     runStats,
     rounds: paginatedRounds,

@@ -20,15 +20,6 @@ export const ROUND_STATUS_BADGES: Record<TaskRoundLifecycle, string> = {
   completed: "bg-slate-200 text-slate-600",
 };
 
-export const NAV_SECTIONS: Array<{ id: string; label: string }> = [
-  { id: "overview", label: "概览" },
-  { id: "rounds", label: "任务轮" },
-  { id: "data-monitor", label: "数据监测" },
-  { id: "run-settings", label: "运行配置" },
-  { id: "imports", label: "任务导入" },
-  { id: "task-list", label: "任务列表" },
-];
-
 export const TASK_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 export const ROUND_PAGE_SIZE_OPTIONS = [5, 10, 20];
 

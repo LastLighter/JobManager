@@ -10,6 +10,7 @@ export async function POST(request: Request) {
 
   let requestedBatchSize: number | undefined;
   let requestedRoundId: string | undefined;
+  let requestedNodeId: string | undefined;
 
   try {
     const body = await request.json();
@@ -19,12 +20,18 @@ export async function POST(request: Request) {
     if (body && typeof body.roundId === "string" && body.roundId.trim() !== "") {
       requestedRoundId = body.roundId.trim();
     }
+    const nodeIdPayload =
+      (body && typeof body.node_id === "string" && body.node_id.trim() !== "" && body.node_id.trim()) ||
+      (body && typeof body.nodeId === "string" && body.nodeId.trim() !== "" && body.nodeId.trim());
+    if (nodeIdPayload) {
+      requestedNodeId = nodeIdPayload;
+    }
   } catch {
     // Ignore JSON parse errors; fall back to default batch size.
   }
 
   const size = Math.min(requestedBatchSize ?? fallbackBatchSize, safeMaxBatchSize);
-  const tasks = taskStore.getTasksForProcessing(size, requestedRoundId);
+  const tasks = taskStore.getTasksForProcessing(size, requestedRoundId, requestedNodeId);
 
   return NextResponse.json(
     tasks.map((task) => ({
@@ -41,7 +48,8 @@ export async function GET(request: Request) {
   const fallbackBatchSize = config.defaultBatchSize;
   const url = new URL(request.url);
   const roundId = url.searchParams.get("roundId") ?? undefined;
-  const tasks = taskStore.getTasksForProcessing(fallbackBatchSize, roundId);
+  const nodeId = url.searchParams.get("node_id") ?? url.searchParams.get("nodeId") ?? undefined;
+  const tasks = taskStore.getTasksForProcessing(fallbackBatchSize, roundId, nodeId ?? undefined);
 
   return NextResponse.json(
     tasks.map((task) => ({

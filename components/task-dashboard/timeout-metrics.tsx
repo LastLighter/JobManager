@@ -56,7 +56,7 @@ export function TimeoutMetricsSection({
         <div>
           <h2 className="text-lg font-semibold text-slate-900">超时监控</h2>
           <p className="text-sm text-slate-500">
-            系统每隔固定间隔检测“处理中”任务，超过阈值将自动回退为“未处理”。
+            系统每隔固定间隔检测“处理中”任务，超过阈值将自动标记为“失败”。
           </p>
         </div>
       </div>
@@ -237,6 +237,24 @@ function TimeoutTaskList({
                 >
                   📋
                 </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-slate-500">
+                <span>执行节点：</span>
+                {task.nodeId ? (
+                  <>
+                    <span className="font-mono text-slate-700">{task.nodeId}</span>
+                    <button
+                      type="button"
+                      className="rounded px-1 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-700"
+                      onClick={() => copyToClipboard(task.nodeId!)}
+                      title="复制节点ID"
+                    >
+                      📋
+                    </button>
+                  </>
+                ) : (
+                  <span className="font-mono text-slate-700">-</span>
+                )}
               </div>
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-slate-400">
