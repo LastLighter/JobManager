@@ -1600,14 +1600,16 @@ class TaskStore {
       }
       this.refreshRoundStatus(prepared);
       const countsAfterDistribution = this.getCountsForEntry(prepared);
-      if (countsAfterDistribution.pending > 0 || countsAfterDistribution.processing > 0) {
+      const hasFetchedTasks = tasks.length > 0;
+      const hasRemainingPending = countsAfterDistribution.pending > 0;
+      if (hasFetchedTasks) {
+        this.activeRoundId = prepared.id;
+      }
+      if (hasFetchedTasks || hasRemainingPending) {
         shouldStopDistributing = true;
       }
       collected.push(...tasks);
       processedRounds.add(prepared.id);
-      if (tasks.length > 0) {
-        this.activeRoundId = prepared.id;
-      }
     };
 
     if (roundId) {
