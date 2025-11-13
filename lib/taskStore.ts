@@ -1315,22 +1315,28 @@ class TaskStore {
       return entry.status;
     }
 
-    const shouldBeActive = counts.pending > 0 || counts.processing > 0;
+    const hasProcessing = counts.processing > 0;
+    const hasPending = counts.pending > 0;
 
-    if (shouldBeActive) {
+    if (hasProcessing) {
       if (entry.status !== "active") {
         entry.status = "active";
         entry.activatedAt = entry.activatedAt ?? Date.now();
       }
       entry.completedAt = null;
-    } else {
-      if (entry.status === "active") {
-        entry.status = "pending";
-      } else if (entry.status === "completed") {
-        entry.status = "pending";
-        entry.completedAt = null;
-      }
+      return entry.status;
     }
+
+    if (entry.status === "active") {
+      entry.status = "pending";
+    } else if (entry.status === "completed") {
+      entry.status = "pending";
+    }
+
+    if (hasPending || counts.failed > 0) {
+      entry.completedAt = null;
+    }
+
     return entry.status;
   }
 
@@ -1367,11 +1373,6 @@ class TaskStore {
     if (!store) {
       return null;
     }
-    if (entry.status !== "active") {
-      entry.status = "active";
-      entry.activatedAt = entry.activatedAt ?? Date.now();
-    }
-    entry.completedAt = null;
     if (!this.activeRoundId) {
       this.activeRoundId = entry.id;
     }
@@ -1565,6 +1566,7 @@ class TaskStore {
     const safeBatchSize = Math.max(1, Math.floor(batchSize));
     const collected: TaskRecord[] = [];
     const processedRounds = new Set<string>();
+    let shouldStopDistributing = false;
 
     const fetchFromEntry = (entry: RoundEntry | null, limit: number) => {
       if (!entry || processedRounds.has(entry.id)) {
@@ -1597,6 +1599,10 @@ class TaskStore {
         this.taskIdToRoundId.set(task.id, prepared.id);
       }
       this.refreshRoundStatus(prepared);
+      const countsAfterDistribution = this.getCountsForEntry(prepared);
+      if (countsAfterDistribution.pending > 0 || countsAfterDistribution.processing > 0) {
+        shouldStopDistributing = true;
+      }
       collected.push(...tasks);
       processedRounds.add(prepared.id);
       if (tasks.length > 0) {
@@ -1613,6 +1619,9 @@ class TaskStore {
     const activeEntry = this.ensureActiveRound();
     if (activeEntry) {
       fetchFromEntry(activeEntry, safeBatchSize - collected.length);
+      if (shouldStopDistributing) {
+        return collected.slice(0, safeBatchSize);
+      }
     }
 
     if (collected.length >= safeBatchSize) {
@@ -1620,6 +1629,9 @@ class TaskStore {
     }
 
     for (const roundKey of this.roundOrder) {
+      if (shouldStopDistributing) {
+        break;
+      }
       if (collected.length >= safeBatchSize) {
         break;
       }
