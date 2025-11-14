@@ -134,12 +134,12 @@ export interface NodeStatsItem {
   totalRunningTime: number;
   recordCount: number;
   avgSpeed: number;
+  avgTimePer100Items: number;
   lastUpdated: number;
   recentRecords: NodePerformanceRecordItem[];
   requestCount: number;
   assignedTaskCount: number;
   activeTaskCount: number;
-  activeTaskIds: string[];
 }
 
 export interface NodeStatsSummary {
@@ -148,7 +148,7 @@ export interface NodeStatsSummary {
   totalRunningTime: number;
   recordCount: number;
   averageSpeed: number | null;
-  averageRunningTime: number | null;
+  averageTimePer100Items: number | null;
   averageItemNum: number | null;
   totalRequests: number;
   totalAssignedTasks: number;

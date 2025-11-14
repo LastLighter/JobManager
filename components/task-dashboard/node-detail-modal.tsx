@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { DetailedSpeedChart } from "./charts";
 import type { AggregatedPerformanceRecord, NodeStatsItem } from "./types";
@@ -21,20 +21,9 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
     [node.recentRecords],
   );
 
-  const handleCopy = useCallback((value: string) => {
-    navigator.clipboard
-      .writeText(value)
-      .catch(() => window.alert("复制失败，请手动复制。"));
-  }, []);
-
   const lastUpdatedText = formatDate(node.lastUpdated);
   const averageSpeedPerMinute =
     Number.isFinite(node.avgSpeed) && node.avgSpeed >= 0 ? node.avgSpeed * 60 : null;
-
-  const activeTaskPreview =
-    node.activeTaskCount > 0
-      ? node.activeTaskIds.slice(0, 3).join(", ") + (node.activeTaskIds.length > 3 ? "…" : "")
-      : undefined;
 
   const metrics = [
     {
@@ -48,7 +37,6 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
     {
       label: "进行中任务",
       value: formatNumber(node.activeTaskCount),
-      subValue: activeTaskPreview ? `示例任务：${activeTaskPreview}` : undefined,
     },
     {
       label: "最近记录次数",
@@ -65,6 +53,10 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
     {
       label: "累计运行时长",
       value: formatSeconds(node.totalRunningTime),
+    },
+    {
+      label: "每100项平均耗时",
+      value: formatSeconds(node.avgTimePer100Items),
     },
     {
       label: "平均速度",
@@ -111,25 +103,6 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
             <h3 className="mb-4 text-base font-semibold text-slate-900">速度趋势</h3>
             <DetailedSpeedChart data={aggregatedRecords} />
           </section>
-          {node.activeTaskIds.length > 0 && (
-            <section className="mb-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="mb-3 text-base font-semibold text-slate-900">正在处理的任务</h3>
-              <p className="mb-3 text-xs text-slate-500">共 {formatNumber(node.activeTaskCount)} 个任务正在该节点执行。</p>
-              <div className="flex flex-wrap gap-2">
-                {node.activeTaskIds.map((taskId) => (
-                  <button
-                    key={taskId}
-                    type="button"
-                    className="rounded border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-mono text-slate-700 transition hover:bg-slate-100"
-                    onClick={() => handleCopy(taskId)}
-                    title="点击复制任务ID"
-                  >
-                    {taskId}
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
           <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <h3 className="mb-4 text-base font-semibold text-slate-900">聚合记录明细</h3>
             {aggregatedRecords.length === 0 ? (

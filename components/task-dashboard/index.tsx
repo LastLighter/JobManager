@@ -1130,8 +1130,8 @@ export function TaskDashboard() {
                     <NodeSummaryTile label="总运行时间" value={formatSeconds(nodeStatsSummary.totalRunningTime)} />
                     <NodeSummaryTile label="平均速度" value={formatSpeed(nodeStatsSummary.averageSpeed, "项/秒")} />
                     <NodeSummaryTile
-                      label="平均运行时间"
-                      value={formatSeconds(nodeStatsSummary.averageRunningTime)}
+                      label="每100项平均耗时"
+                      value={formatSeconds(nodeStatsSummary.averageTimePer100Items)}
                       subValue={
                         nodeStatsSummary.averageItemNum !== null
                           ? `单次平均处理 ${formatNumber(nodeStatsSummary.averageItemNum)} 项`
@@ -1160,6 +1160,7 @@ export function TaskDashboard() {
                           <th className="px-4 py-3">进行中任务</th>
                           <th className="px-4 py-3">总处理量</th>
                           <th className="px-4 py-3">总运行时间 (秒)</th>
+                          <th className="px-4 py-3">每100项平均耗时 (秒)</th>
                           <th className="px-4 py-3">记录次数</th>
                           <th className="px-4 py-3">平均速度 (项/秒)</th>
                           <th className="px-4 py-3">最近速度 (项/秒)</th>
@@ -1177,33 +1178,10 @@ export function TaskDashboard() {
                               <td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{node.nodeId}</td>
                                 <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
                                 <td className="px-4 py-3">{node.assignedTaskCount.toLocaleString()}</td>
-                                <td className="px-4 py-3">
-                                  {node.activeTaskCount === 0 ? (
-                                    "0"
-                                  ) : (
-                                    <div className="flex flex-col gap-1 text-xs">
-                                      <span>{node.activeTaskCount.toLocaleString()}</span>
-                                      <div className="flex flex-wrap gap-1">
-                                        {node.activeTaskIds.slice(0, 3).map((taskId) => (
-                                          <span
-                                            key={taskId}
-                                            className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-slate-600"
-                                            title={taskId}
-                                          >
-                                            {taskId}
-                                          </span>
-                                        ))}
-                                        {node.activeTaskIds.length > 3 && (
-                                          <span className="text-[10px] text-slate-400">
-                                            +{node.activeTaskIds.length - 3}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </td>
+                              <td className="px-4 py-3">{node.activeTaskCount.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.totalItemNum.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
+                              <td className="px-4 py-3">{formatSeconds(node.avgTimePer100Items)}</td>
                               <td className="px-4 py-3">{node.recordCount}</td>
                               <td className="px-4 py-3">{node.avgSpeed.toFixed(4)}</td>
                               <td className="px-4 py-3">{latestSpeed !== null ? latestSpeed.toFixed(4) : "-"}</td>

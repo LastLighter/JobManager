@@ -19,6 +19,21 @@ export interface TaskRecord {
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const ROUNDS_DIR = path.join(DATA_DIR, "rounds");
+const MAX_ROUND_NAME_LENGTH = 64;
+
+function sanitizeRoundName(rawName: string | undefined | null): string | undefined {
+  if (!rawName) {
+    return undefined;
+  }
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length <= MAX_ROUND_NAME_LENGTH) {
+    return trimmed;
+  }
+  return trimmed.slice(0, MAX_ROUND_NAME_LENGTH);
+}
 
 interface TaskCounts {
   total: number;
@@ -114,6 +129,7 @@ export interface NodeStats {
   totalRunningTime: number;
   recordCount: number;
   avgSpeed: number; // items per second
+  avgTimePer100Items: number; // seconds per 100 items
   lastUpdated: number;
   recentRecords: NodePerformanceRecord[];
   requestCount: number;
@@ -127,7 +143,7 @@ export interface NodeStatsSummary {
   totalRunningTime: number;
   recordCount: number;
   averageSpeed: number | null;
-  averageRunningTime: number | null;
+  averageTimePer100Items: number | null;
   averageItemNum: number | null;
   totalRequests: number;
   totalAssignedTasks: number;
@@ -742,6 +758,7 @@ class SingleRoundStore {
       totalRunningTime: 0,
       recordCount: 0,
       avgSpeed: 0,
+      avgTimePer100Items: 0,
       lastUpdated: referenceTime,
       recentRecords: [],
       requestCount: 0,
@@ -951,6 +968,10 @@ class SingleRoundStore {
         const requestCount = Number.isFinite(node.requestCount) ? node.requestCount : 0;
         const assignedTaskCount = Number.isFinite(node.assignedTaskCount) ? node.assignedTaskCount : 0;
         const activeTaskIds = Array.isArray(node.activeTaskIds) ? [...node.activeTaskIds] : [];
+        const avgSpeed = Number.isFinite(node.avgSpeed) ? node.avgSpeed : 0;
+        const avgTimePer100Items = Number.isFinite(node.avgTimePer100Items)
+          ? node.avgTimePer100Items
+          : 0;
         return [
           node.nodeId,
           {
@@ -958,6 +979,8 @@ class SingleRoundStore {
             requestCount,
             assignedTaskCount,
             activeTaskIds,
+            avgSpeed,
+            avgTimePer100Items,
             recentRecords: [...node.recentRecords],
           },
         ] as const;
@@ -1042,7 +1065,11 @@ class SingleRoundStore {
     stats.totalItemNum = totalItemNum;
     stats.totalRunningTime = totalRunningTime;
     stats.recordCount = recordCount;
-    stats.avgSpeed = totalRunningTime > 0 ? totalItemNum / totalRunningTime : 0;
+    const avgSpeed = totalRunningTime > 0 ? totalItemNum / totalRunningTime : 0;
+    const avgTimePer100Items =
+      totalItemNum > 0 ? (totalRunningTime / totalItemNum) * 100 : 0;
+    stats.avgSpeed = Number.isFinite(avgSpeed) ? avgSpeed : 0;
+    stats.avgTimePer100Items = Number.isFinite(avgTimePer100Items) ? avgTimePer100Items : 0;
     stats.lastUpdated = stats.recentRecords.at(-1)?.timestamp ?? stats.lastUpdated;
   }
 }
@@ -1110,7 +1137,7 @@ class TaskStore {
       entry.store = store;
       entry.isDirty = false;
       entry.hasPersisted = true;
-      entry.name = parsed.metadata.name;
+      entry.name = sanitizeRoundName(parsed.metadata.name) ?? entry.id;
       entry.sourceType = parsed.metadata.sourceType;
       entry.sourceHint = parsed.metadata.sourceHint;
       entry.createdAt = parsed.metadata.createdAt;
@@ -1384,10 +1411,11 @@ class TaskStore {
     const store = new SingleRoundStore();
     store.setRoundId(roundId);
     const enqueueResult = store.enqueueTasksFromPaths(paths);
+    const sanitizedName = sanitizeRoundName(options.name) ?? roundId;
 
     const entry: RoundEntry = {
       id: roundId,
-      name: options.name?.trim() || roundId,
+      name: sanitizedName,
       sourceType: options.sourceType,
       sourceHint: options.sourceHint,
       createdAt: Date.now(),
@@ -1873,8 +1901,8 @@ class TaskStore {
           const totalActiveTasks = stats.reduce((sum, node) => sum + node.activeTaskIds.length, 0);
           const averageSpeed =
             totalRunningTime > 0 ? totalItemNum / totalRunningTime : nodeCount > 0 ? 0 : null;
-          const averageRunningTime =
-            recordCount > 0 ? totalRunningTime / recordCount : nodeCount > 0 ? 0 : null;
+          const averageTimePer100Items =
+            totalItemNum > 0 ? (totalRunningTime / totalItemNum) * 100 : nodeCount > 0 ? 0 : null;
           const averageItemNum =
             recordCount > 0 ? totalItemNum / recordCount : nodeCount > 0 ? 0 : null;
 
@@ -1884,7 +1912,7 @@ class TaskStore {
             totalRunningTime,
             recordCount,
             averageSpeed,
-            averageRunningTime,
+            averageTimePer100Items,
             averageItemNum,
             totalRequests,
             totalAssignedTasks,
