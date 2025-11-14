@@ -1324,13 +1324,13 @@ class TaskStore {
   private refreshRoundStatus(entry: RoundEntry): TaskRoundLifecycle {
     const counts = this.getCountsForEntry(entry);
     const total = counts.total;
-    const unfinished = counts.pending + counts.processing + counts.failed;
+    const remainingWork = counts.pending + counts.processing;
     if (total === 0) {
       entry.status = "completed";
       entry.completedAt = entry.completedAt ?? Date.now();
       return entry.status;
     }
-    if (unfinished === 0) {
+    if (remainingWork === 0) {
       entry.status = "completed";
       entry.completedAt = entry.completedAt ?? Date.now();
       if (this.activeRoundId === entry.id) {
@@ -1360,7 +1360,7 @@ class TaskStore {
       entry.status = "pending";
     }
 
-    if (hasPending || counts.failed > 0) {
+    if (hasPending) {
       entry.completedAt = null;
     }
 

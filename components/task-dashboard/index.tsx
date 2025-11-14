@@ -702,8 +702,6 @@ export function TaskDashboard() {
     Math.round((summary?.timeoutMs ?? timeoutMinutes * 60 * 1000) / 60000),
   );
   const timeoutLastInspected = timeoutMetrics ? formatDate(timeoutMetrics.inspectedAt) : "-";
-  const hasTimedOutTasks = Boolean(timeoutMetrics && timeoutMetrics.topTimedOut.length > 0);
-  const hasProcessingTasks = Boolean(timeoutMetrics && timeoutMetrics.topProcessing.length > 0);
 
   if (summary?.runStats?.allCompleted && showCompletionSummary) {
     return (
@@ -787,17 +785,25 @@ export function TaskDashboard() {
                           const isActive = round.id === activeRoundId;
                           const progress = round.counts.total > 0 ? Math.round((round.counts.completed / round.counts.total) * 100) : 0;
                           const lastUpdate = round.completedAt ?? round.activatedAt ?? round.createdAt;
+                          const statusLabel = isActive
+                            ? {
+                                text: "当前",
+                                className: "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700",
+                              }
+                            : isSelected
+                              ? {
+                                  text: "查看中",
+                                  className: "rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white",
+                                }
+                              : null;
                           return (
                             <tr key={round.id} className={`transition ${isSelected ? "bg-slate-100/70" : "hover:bg-slate-50"}`}>
                               <td className="px-4 py-3">
                                 <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-2">
                                     <span className="font-medium text-slate-800">{round.name}</span>
-                                    {isActive && (
-                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">当前</span>
-                                    )}
-                                    {isSelected && (
-                                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">查看中</span>
+                                    {statusLabel && (
+                                      <span className={`${statusLabel.className} min-w-[48px] text-center`}>{statusLabel.text}</span>
                                     )}
                                   </div>
                                   <span className="text-xs text-slate-400">ID: {round.id}</span>
@@ -1084,9 +1090,6 @@ export function TaskDashboard() {
                 selectedRoundTimeout={selectedRoundTimeout}
                 timeoutThresholdMinutes={timeoutThresholdMinutesFromSummary}
                 timeoutLastInspected={timeoutLastInspected}
-                hasTimedOutTasks={hasTimedOutTasks}
-                hasProcessingTasks={hasProcessingTasks}
-                copyToClipboard={copyToClipboard}
                 roundNameById={roundNameById}
                 onRoundSelect={(roundId) => handleRoundChange(roundId)}
               />
@@ -1124,7 +1127,6 @@ export function TaskDashboard() {
                 {nodeStatsSummary && (
                   <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <NodeSummaryTile label="总请求次数" value={formatNumber(nodeStatsSummary.totalRequests)} />
-                    <NodeSummaryTile label="已分配任务" value={formatNumber(nodeStatsSummary.totalAssignedTasks)} />
                     <NodeSummaryTile label="进行中任务" value={formatNumber(nodeStatsSummary.totalActiveTasks)} />
                     <NodeSummaryTile label="总处理项数" value={formatNumber(nodeStatsSummary.totalItemNum)} />
                     <NodeSummaryTile label="总运行时间" value={formatSeconds(nodeStatsSummary.totalRunningTime)} />
@@ -1156,12 +1158,10 @@ export function TaskDashboard() {
                         <tr>
                           <th className="px-4 py-3">节点ID</th>
                           <th className="px-4 py-3">请求次数</th>
-                          <th className="px-4 py-3">已分配任务</th>
                           <th className="px-4 py-3">进行中任务</th>
                           <th className="px-4 py-3">总处理量</th>
                           <th className="px-4 py-3">总运行时间 (秒)</th>
                           <th className="px-4 py-3">每100项平均耗时 (秒)</th>
-                          <th className="px-4 py-3">记录次数</th>
                           <th className="px-4 py-3">平均速度 (项/秒)</th>
                           <th className="px-4 py-3">最近速度 (项/秒)</th>
                           <th className="px-4 py-3">速度趋势</th>
@@ -1176,13 +1176,11 @@ export function TaskDashboard() {
                           return (
                             <tr key={node.nodeId} className="hover:bg-slate-50">
                               <td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{node.nodeId}</td>
-                                <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
-                                <td className="px-4 py-3">{node.assignedTaskCount.toLocaleString()}</td>
+                              <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.activeTaskCount.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.totalItemNum.toLocaleString()}</td>
                               <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
                               <td className="px-4 py-3">{formatSeconds(node.avgTimePer100Items)}</td>
-                              <td className="px-4 py-3">{node.recordCount}</td>
                               <td className="px-4 py-3">{node.avgSpeed.toFixed(4)}</td>
                               <td className="px-4 py-3">{latestSpeed !== null ? latestSpeed.toFixed(4) : "-"}</td>
                               <td className="px-4 py-3">

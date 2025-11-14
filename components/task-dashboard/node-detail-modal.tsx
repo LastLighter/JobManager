@@ -31,20 +31,8 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
       value: formatNumber(node.requestCount),
     },
     {
-      label: "已分配任务",
-      value: formatNumber(node.assignedTaskCount),
-    },
-    {
       label: "进行中任务",
       value: formatNumber(node.activeTaskCount),
-    },
-    {
-      label: "最近记录次数",
-      value: formatNumber(node.recentRecords.length),
-      subValue:
-        aggregatedRecords.length !== node.recentRecords.length
-          ? `聚合后 ${formatNumber(aggregatedRecords.length)} 组`
-          : undefined,
     },
     {
       label: "总处理项数",
