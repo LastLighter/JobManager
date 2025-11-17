@@ -8,6 +8,21 @@ export interface SummaryCounts {
   failed: number;
 }
 
+export interface ProcessedStats {
+  totalItemNum: number;
+  totalRunningTime: number;
+  lastProcessedAt: number | null;
+  averageTimePerItem: number | null;
+  averageTimePer100Items: number | null;
+}
+
+export interface ItemAggregateStats {
+  totalItemNum: number;
+  totalRunningTime: number;
+  averageTimePerItem: number | null;
+  averageTimePer100Items: number | null;
+}
+
 export interface RoundStatsSummary {
   totalRounds: number;
   statusCounts: {
@@ -16,6 +31,7 @@ export interface RoundStatsSummary {
     completed: number;
   };
   aggregateTaskCounts: SummaryCounts;
+  aggregateItemStats: ItemAggregateStats;
 }
 
 export interface RoundPagination {
@@ -73,6 +89,7 @@ export interface TaskRoundSummary {
   sourceType: string;
   sourceHint?: string;
   counts: SummaryCounts;
+  processed: ProcessedStats;
 }
 
 export interface TaskItem {
@@ -103,6 +120,8 @@ export interface RunStats {
   totalRunningTime: number;
   averageTaskSpeed: number | null;
   averageItemSpeed: number | null;
+  averageTimePerItem: number | null;
+  averageTimePer100Items: number | null;
 }
 
 export interface SummaryResponse {
@@ -119,6 +138,7 @@ export interface SummaryResponse {
   roundPagination: RoundPagination;
   timeoutMetrics: TimeoutMetricsPayload;
   timeoutMs: number;
+  globalCompletion: GlobalCompletionStats;
 }
 
 export interface NodePerformanceRecordItem {
@@ -142,6 +162,13 @@ export interface NodeStatsItem {
   activeTaskCount: number;
 }
 
+export interface NodeStatsPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface NodeStatsSummary {
   nodeCount: number;
   totalItemNum: number;
@@ -162,5 +189,19 @@ export interface AggregatedPerformanceRecord {
   totalItemNum: number;
   totalRunningTime: number;
   count: number;
+}
+
+export interface GlobalCompletionStats {
+  totalRounds: number;
+  completedRounds: number;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  totalProcessedItems: number;
+  totalRunningTime: number;
+  averageTimePerItem: number | null;
+  averageTimePer100Items: number | null;
+  allRoundsCompleted: boolean;
+  generatedAt: number;
 }
 

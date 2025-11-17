@@ -45,6 +45,22 @@ export async function GET(request: NextRequest) {
     },
     { total: 0, pending: 0, processing: 0, completed: 0, failed: 0 },
   );
+  const aggregateItemStats = allRounds.reduce(
+    (acc, round) => {
+      if (round?.processed) {
+        acc.totalItemNum += round.processed.totalItemNum;
+        acc.totalRunningTime += round.processed.totalRunningTime;
+      }
+      return acc;
+    },
+    { totalItemNum: 0, totalRunningTime: 0 },
+  );
+  const aggregateAverageTimePerItem =
+    aggregateItemStats.totalItemNum > 0
+      ? aggregateItemStats.totalRunningTime / aggregateItemStats.totalItemNum
+      : null;
+  const aggregateAverageTimePer100Items =
+    aggregateAverageTimePerItem !== null ? aggregateAverageTimePerItem * 100 : null;
   const roundStatusCounts = {
     pending: allRounds.filter((round) => round.status === "pending").length,
     active: allRounds.filter((round) => round.status === "active").length,
@@ -85,6 +101,7 @@ export async function GET(request: NextRequest) {
     selectedRoundIndex >= 0 ? Math.floor(selectedRoundIndex / roundPageSize) + 1 : null;
 
   const timeoutInspection = taskStore.inspectProcessingTasks(timeoutMs, selectedRoundId ?? undefined);
+  const globalCompletion = taskStore.getGlobalCompletionStats();
 
   return NextResponse.json({
     status,
@@ -111,6 +128,12 @@ export async function GET(request: NextRequest) {
       totalRounds,
       statusCounts: roundStatusCounts,
       aggregateTaskCounts: aggregateCounts,
+      aggregateItemStats: {
+        totalItemNum: aggregateItemStats.totalItemNum,
+        totalRunningTime: aggregateItemStats.totalRunningTime,
+        averageTimePerItem: aggregateAverageTimePerItem,
+        averageTimePer100Items: aggregateAverageTimePer100Items,
+      },
     },
     roundPagination: {
       page: currentRoundPage,
@@ -132,6 +155,7 @@ export async function GET(request: NextRequest) {
       selectedRound: timeoutInspection.selectedRound,
     },
     timeoutMs,
+    globalCompletion,
   });
 }
 

@@ -9,6 +9,7 @@ import {
   ROUND_STATUS_LABELS,
   STATUS_OPTIONS,
   TASK_PAGE_SIZE_OPTIONS,
+  NODE_PAGE_SIZE_OPTIONS,
   statusBadgeStyles,
 } from "./constants";
 import { CompletionSummary } from "./completion-summary";
@@ -58,6 +59,10 @@ export function TaskDashboard() {
   const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<NodeStatsItem | null>(null);
   const [nodeStatsSummary, setNodeStatsSummary] = useState<NodeStatsSummary | null>(null);
+  const [nodeStatsPage, setNodeStatsPage] = useState(1);
+  const [nodeStatsPageSize, setNodeStatsPageSize] = useState(10);
+  const [nodeStatsTotal, setNodeStatsTotal] = useState(0);
+  const [nodeStatsTotalPages, setNodeStatsTotalPages] = useState(1);
 
   // Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -71,6 +76,7 @@ export function TaskDashboard() {
   // Batch size configuration
   const [defaultBatchSize, setDefaultBatchSize] = useState(8);
   const [maxBatchSize, setMaxBatchSize] = useState(1000);
+  const [feishuWebhookUrl, setFeishuWebhookUrl] = useState("");
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -173,24 +179,44 @@ export function TaskDashboard() {
     try {
       setNodeStatsLoading(true);
       setNodeStatsError(null);
-      const roundQuery =
-        selectedRoundId && selectedRoundId !== "" ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
-      const response = await fetch(`/api/tasks/node_stats${roundQuery}`, { cache: "no-store" });
+      const params = new URLSearchParams({
+        page: String(nodeStatsPage),
+        pageSize: String(nodeStatsPageSize),
+      });
+      if (selectedRoundId && selectedRoundId !== "") {
+        params.set("roundId", selectedRoundId);
+      }
+      const response = await fetch(`/api/tasks/node_stats?${params.toString()}`, { cache: "no-store" });
       if (!response.ok) {
         throw new Error(await response.text());
       }
       const data = await response.json();
-      setNodeStats(Array.isArray(data.nodes) ? data.nodes : []);
+      const nodes = Array.isArray(data.nodes) ? (data.nodes as NodeStatsItem[]) : [];
+      setNodeStats(nodes);
       setNodeStatsSummary(
         data.summary && typeof data.summary === "object" ? (data.summary as NodeStatsSummary) : null,
       );
+      const rawTotal = typeof data.total === "number" && Number.isFinite(data.total) ? data.total : nodes.length;
+      setNodeStatsTotal(rawTotal);
+      const nextPageSize =
+        typeof data.pageSize === "number" && data.pageSize > 0 ? data.pageSize : nodeStatsPageSize;
+      if (nextPageSize !== nodeStatsPageSize) {
+        setNodeStatsPageSize(nextPageSize);
+      }
+      const nextTotalPages = Math.max(1, Math.ceil(rawTotal / nextPageSize) || 1);
+      setNodeStatsTotalPages(nextTotalPages);
+      const nextPage =
+        typeof data.page === "number" && data.page > 0 ? Math.min(data.page, nextTotalPages) : nodeStatsPage;
+      if (nextPage !== nodeStatsPage) {
+        setNodeStatsPage(nextPage);
+      }
     } catch (err) {
       console.error("获取节点统计失败", err);
       setNodeStatsError("获取节点统计失败，请稍后重试。");
     } finally {
       setNodeStatsLoading(false);
     }
-  }, [selectedRoundId]);
+  }, [selectedRoundId, nodeStatsPage, nodeStatsPageSize]);
 
   const fetchBatchSizeConfig = useCallback(async () => {
     try {
@@ -199,6 +225,9 @@ export function TaskDashboard() {
         const data = await response.json();
         setDefaultBatchSize(data.defaultBatchSize);
         setMaxBatchSize(data.maxBatchSize);
+        setFeishuWebhookUrl(
+          typeof data.feishuWebhookUrl === "string" ? data.feishuWebhookUrl : "",
+        );
       }
     } catch (err) {
       console.error("获取批次大小配置失败", err);
@@ -206,7 +235,7 @@ export function TaskDashboard() {
   }, []);
 
   const currentTasks = summary?.tasks ?? [];
-  const nodeCount = nodeStats.length;
+  const nodeCount = nodeStatsSummary?.nodeCount ?? nodeStatsTotal ?? nodeStats.length;
   const roundNameById = useMemo(() => {
     const map = new Map<string, string>();
     rounds.forEach((round) => {
@@ -223,6 +252,10 @@ export function TaskDashboard() {
     () => (activeRoundId ? roundNameById.get(activeRoundId) ?? activeRoundId : null),
     [activeRoundId, roundNameById],
   );
+  const globalCompletion = summary?.globalCompletion ?? null;
+  const completedRoundsCount = roundStats?.statusCounts.completed ?? 0;
+  const totalRoundsCount = roundStats?.totalRounds ?? 0;
+  const aggregateItemStats = roundStats?.aggregateItemStats ?? null;
 
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard
@@ -286,6 +319,10 @@ export function TaskDashboard() {
     }, 30_000);
     return () => window.clearInterval(interval);
   }, [fetchNodeStats]);
+
+  useEffect(() => {
+    setNodeStatsPage(1);
+  }, [selectedRoundId]);
 
   useEffect(() => {
     if (summary?.runStats?.allCompleted) {
@@ -573,8 +610,9 @@ export function TaskDashboard() {
 
   const handleClearNodeStats = async () => {
     const scopeLabel = selectedRoundId ? `任务轮「${selectedRoundDisplayName}」` : "全部任务轮";
+    const totalNodesLabel = nodeStatsTotal.toLocaleString();
     const confirmed = window.confirm(
-      `确定要清除${scopeLabel}的节点统计数据吗？此操作不可撤销。\n\n当前共有 ${nodeStats.length} 个节点。`,
+      `确定要清除${scopeLabel}的节点统计数据吗？此操作不可撤销。\n\n当前共记录 ${totalNodesLabel} 个节点。`,
     );
 
     if (!confirmed) {
@@ -599,6 +637,7 @@ export function TaskDashboard() {
         }。`,
       );
       setSelectedNode(null);
+      setNodeStatsPage(1);
       await fetchNodeStats();
     } catch (err) {
       console.error("清除节点统计失败", err);
@@ -659,6 +698,12 @@ export function TaskDashboard() {
       return;
     }
 
+    const trimmedWebhook = feishuWebhookUrl.trim();
+    if (trimmedWebhook && !/^https:\/\//i.test(trimmedWebhook)) {
+      setError("飞书 Webhook 地址需以 https:// 开头");
+      return;
+    }
+
     setIsSavingConfig(true);
     setError(null);
     setInfoMessage(null);
@@ -672,6 +717,7 @@ export function TaskDashboard() {
         body: JSON.stringify({
           defaultBatchSize,
           maxBatchSize,
+          feishuWebhookUrl: trimmedWebhook.length > 0 ? trimmedWebhook : null,
         }),
       });
 
@@ -683,7 +729,10 @@ export function TaskDashboard() {
       const result = await response.json();
       setDefaultBatchSize(result.defaultBatchSize);
       setMaxBatchSize(result.maxBatchSize);
-      setInfoMessage("批次大小配置已保存");
+      setFeishuWebhookUrl(
+        typeof result.feishuWebhookUrl === "string" ? result.feishuWebhookUrl : "",
+      );
+      setInfoMessage("系统配置已保存");
     } catch (err) {
       console.error("保存批次大小配置失败", err);
       setError(err instanceof Error ? err.message : "保存配置失败，请稍后重试。");
@@ -758,6 +807,37 @@ export function TaskDashboard() {
                     <RoundStatTile label="已完结" value={roundStats?.statusCounts.completed ?? 0} />
                   </div>
                 </div>
+                {totalRoundsCount > 0 && globalCompletion && (
+                  <div
+                    className={`rounded-lg border px-4 py-3 text-xs ${
+                      globalCompletion.allRoundsCompleted
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>
+                        已完成任务轮 {completedRoundsCount}/{totalRoundsCount}
+                      </span>
+                      {globalCompletion.allRoundsCompleted && <span className="font-medium">🎉 全部任务轮已完成</span>}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                      <span>
+                        成功 {formatNumber(globalCompletion.completedTasks)} / 总计{" "}
+                        {formatNumber(globalCompletion.totalTasks)}
+                      </span>
+                      <span>失败 {formatNumber(globalCompletion.failedTasks)}</span>
+                      <span>累计项数 {formatNumber(globalCompletion.totalProcessedItems)}</span>
+                      <span>累计运行时间 {formatSeconds(globalCompletion.totalRunningTime)}</span>
+                    </div>
+                    {globalCompletion.averageTimePerItem !== null && (
+                      <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                        <span>平均每项耗时 {formatSeconds(globalCompletion.averageTimePerItem)}</span>
+                        <span>平均每100项耗时 {formatSeconds(globalCompletion.averageTimePer100Items)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="overflow-x-auto">
                   <table className="min-w-full table-auto border-collapse text-left text-sm text-slate-700">
                     <thead className="bg-slate-100 text-xs uppercase text-slate-500">
@@ -766,6 +846,7 @@ export function TaskDashboard() {
                         <th className="px-4 py-3">状态</th>
                         <th className="px-4 py-3">总任务</th>
                         <th className="px-4 py-3">完成数</th>
+                        <th className="px-4 py-3">处理项数</th>
                         <th className="px-4 py-3">进度</th>
                         <th className="px-4 py-3">创建时间</th>
                         <th className="px-4 py-3">最近更新</th>
@@ -821,6 +902,21 @@ export function TaskDashboard() {
                               <td className="px-4 py-3">{round.counts.completed.toLocaleString()}</td>
                               <td className="px-4 py-3">
                                 <div className="flex flex-col gap-1">
+                                  <span className="text-sm font-medium text-slate-700">
+                                    {round.processed.totalItemNum.toLocaleString()}
+                                  </span>
+                                  <span className="text-[11px] text-slate-400">
+                                    {round.processed.averageTimePerItem !== null
+                                      ? `每项 ${formatSeconds(round.processed.averageTimePerItem)}`
+                                      : "每项 -"}
+                                    {round.processed.averageTimePer100Items !== null
+                                      ? ` · 每100项 ${formatSeconds(round.processed.averageTimePer100Items)}`
+                                      : ""}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-col gap-1">
                                   <div className="flex items-center gap-2">
                                     <div className="h-2 w-28 rounded-full bg-slate-200">
                                       <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(progress, 100)}%` }}></div>
@@ -857,7 +953,27 @@ export function TaskDashboard() {
                 </div>
                 {roundStats && (
                   <div className="rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-                    全部任务：{roundStats.aggregateTaskCounts.total.toLocaleString()} 个（未处理 {roundStats.aggregateTaskCounts.pending.toLocaleString()}，处理中 {roundStats.aggregateTaskCounts.processing.toLocaleString()}，已完成 {roundStats.aggregateTaskCounts.completed.toLocaleString()}，失败 {roundStats.aggregateTaskCounts.failed.toLocaleString()}）
+                    <div>
+                      全部任务：{roundStats.aggregateTaskCounts.total.toLocaleString()} 个（未处理{" "}
+                      {roundStats.aggregateTaskCounts.pending.toLocaleString()}，处理中{" "}
+                      {roundStats.aggregateTaskCounts.processing.toLocaleString()}，已完成{" "}
+                      {roundStats.aggregateTaskCounts.completed.toLocaleString()}，失败{" "}
+                      {roundStats.aggregateTaskCounts.failed.toLocaleString()}）
+                    </div>
+                    {aggregateItemStats && (
+                      <div className="mt-1">
+                        累计处理项数 {formatNumber(aggregateItemStats.totalItemNum)}，节点累计耗时{" "}
+                        {formatSeconds(aggregateItemStats.totalRunningTime)}；平均每项耗时{" "}
+                        {aggregateItemStats.averageTimePerItem !== null
+                          ? formatSeconds(aggregateItemStats.averageTimePerItem)
+                          : "-"}
+                        ，每100项耗时{" "}
+                        {aggregateItemStats.averageTimePer100Items !== null
+                          ? formatSeconds(aggregateItemStats.averageTimePer100Items)
+                          : "-"}
+                        。
+                      </div>
+                    )}
                   </div>
                 )}
                 {roundPaginationInfo && (
@@ -1102,7 +1218,9 @@ export function TaskDashboard() {
                     <p className="text-sm text-slate-500">
                       当前任务轮：{selectedRoundDisplayName}（节点数：{nodeStatsSummary?.nodeCount ?? nodeCount}）
                     </p>
-                    <p className="text-xs text-slate-400">系统仅保留最近 2 小时内的节点统计记录。</p>
+                    <p className="text-xs text-slate-400">
+                      系统会自动归档超过 2 小时的节点记录，并保留总体统计数据。
+                    </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -1153,65 +1271,112 @@ export function TaskDashboard() {
                   ) : nodeCount === 0 ? (
                     <p className="text-sm text-slate-500">暂无节点统计数据</p>
                   ) : (
-                    <table className="min-w-full table-auto border-collapse text-left text-sm text-slate-700">
-                      <thead className="bg-slate-100 text-xs uppercase text-slate-500">
-                        <tr>
-                          <th className="px-4 py-3">节点ID</th>
-                          <th className="px-4 py-3">请求次数</th>
-                          <th className="px-4 py-3">进行中任务</th>
-                          <th className="px-4 py-3">总处理量</th>
-                          <th className="px-4 py-3">总运行时间 (秒)</th>
-                          <th className="px-4 py-3">每100项平均耗时 (秒)</th>
-                          <th className="px-4 py-3">平均速度 (项/秒)</th>
-                          <th className="px-4 py-3">最近速度 (项/秒)</th>
-                          <th className="px-4 py-3">速度趋势</th>
-                          <th className="px-4 py-3">最后更新</th>
-                          <th className="px-4 py-3">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {nodeStats.map((node) => {
-                          const latestRecord = node.recentRecords[node.recentRecords.length - 1] ?? null;
-                          const latestSpeed = latestRecord?.speed ?? null;
-                          return (
-                            <tr key={node.nodeId} className="hover:bg-slate-50">
-                              <td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{node.nodeId}</td>
-                              <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
-                              <td className="px-4 py-3">{node.activeTaskCount.toLocaleString()}</td>
-                              <td className="px-4 py-3">{node.totalItemNum.toLocaleString()}</td>
-                              <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
-                              <td className="px-4 py-3">{formatSeconds(node.avgTimePer100Items)}</td>
-                              <td className="px-4 py-3">{node.avgSpeed.toFixed(4)}</td>
-                              <td className="px-4 py-3">{latestSpeed !== null ? latestSpeed.toFixed(4) : "-"}</td>
-                              <td className="px-4 py-3">
-                                <SpeedSparkline records={node.recentRecords} />
-                              </td>
-                              <td className="px-4 py-3">{formatDate(node.lastUpdated)}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <button
-                                    type="button"
-                                    className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                    onClick={() => handleViewNodeDetails(node)}
-                                    disabled={node.recentRecords.length === 0}
-                                  >
-                                    查看详情
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                    onClick={() => handleDeleteNode(node.nodeId)}
-                                    disabled={deletingNodeId === node.nodeId || nodeStatsLoading}
-                                  >
-                                    {deletingNodeId === node.nodeId ? "删除中..." : "删除节点"}
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    <div className="space-y-3">
+                      <table className="min-w-full table-auto border-collapse text-left text-sm text-slate-700">
+                        <thead className="bg-slate-100 text-xs uppercase text-slate-500">
+                          <tr>
+                            <th className="px-4 py-3">节点ID</th>
+                            <th className="px-4 py-3">请求次数</th>
+                            <th className="px-4 py-3">进行中任务</th>
+                            <th className="px-4 py-3">总处理量</th>
+                            <th className="px-4 py-3">总运行时间 (秒)</th>
+                            <th className="px-4 py-3">每100项平均耗时 (秒)</th>
+                            <th className="px-4 py-3">平均速度 (项/秒)</th>
+                            <th className="px-4 py-3">最近速度 (项/秒)</th>
+                            <th className="px-4 py-3">速度趋势</th>
+                            <th className="px-4 py-3">最后更新</th>
+                            <th className="px-4 py-3">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {nodeStats.map((node) => {
+                            const latestRecord = node.recentRecords[node.recentRecords.length - 1] ?? null;
+                            const latestSpeed = latestRecord?.speed ?? null;
+                            return (
+                              <tr key={node.nodeId} className="hover:bg-slate-50">
+                                <td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{node.nodeId}</td>
+                                <td className="px-4 py-3">{node.requestCount.toLocaleString()}</td>
+                                <td className="px-4 py-3">{node.activeTaskCount.toLocaleString()}</td>
+                                <td className="px-4 py-3">{node.totalItemNum.toLocaleString()}</td>
+                                <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
+                                <td className="px-4 py-3">{formatSeconds(node.avgTimePer100Items)}</td>
+                                <td className="px-4 py-3">{node.avgSpeed.toFixed(4)}</td>
+                                <td className="px-4 py-3">{latestSpeed !== null ? latestSpeed.toFixed(4) : "-"}</td>
+                                <td className="px-4 py-3">
+                                  <SpeedSparkline records={node.recentRecords} />
+                                </td>
+                                <td className="px-4 py-3">{formatDate(node.lastUpdated)}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                      type="button"
+                                      className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                      onClick={() => handleViewNodeDetails(node)}
+                                      disabled={node.recentRecords.length === 0}
+                                    >
+                                      查看详情
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                      onClick={() => handleDeleteNode(node.nodeId)}
+                                      disabled={deletingNodeId === node.nodeId || nodeStatsLoading}
+                                    >
+                                      {deletingNodeId === node.nodeId ? "删除中..." : "删除节点"}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      {nodeStatsTotal > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+                          <span>
+                            节点分页：第 {nodeStatsPage} / {nodeStatsTotalPages} 页（共{" "}
+                            {nodeStatsTotal.toLocaleString()} 个节点）
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="flex items-center gap-1">
+                              <span>每页</span>
+                              <select
+                                className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600"
+                                value={nodeStatsPageSize}
+                                onChange={(event) => {
+                                  setNodeStatsPageSize(Number(event.target.value));
+                                  setNodeStatsPage(1);
+                                }}
+                              >
+                                {NODE_PAGE_SIZE_OPTIONS.map((size) => (
+                                  <option key={size} value={size}>
+                                    {size}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => setNodeStatsPage((prev) => Math.max(prev - 1, 1))}
+                              disabled={nodeStatsLoading || nodeStatsPage <= 1}
+                            >
+                              上一页
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() =>
+                                setNodeStatsPage((prev) => Math.min(prev + 1, nodeStatsTotalPages))
+                              }
+                              disabled={nodeStatsLoading || nodeStatsPage >= nodeStatsTotalPages}
+                            >
+                              下一页
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </section>
@@ -1248,6 +1413,23 @@ export function TaskDashboard() {
                   />
                   <p className="text-xs text-slate-500">节点单次请求可获取的最大任务数量</p>
                 </label>
+              </div>
+              <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h3 className="text-sm font-semibold text-slate-800">飞书通知配置</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  当全部任务轮完成时将向该 Webhook 推送通知，留空则关闭通知。
+                </p>
+                <input
+                  type="url"
+                  className="mt-3 rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-800 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                  value={feishuWebhookUrl}
+                  onChange={(event) => setFeishuWebhookUrl(event.target.value)}
+                  autoComplete="off"
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  需使用飞书自定义机器人提供的 HTTPS 地址，包含安全关键词时请确保通知内容满足对应规则。
+                </p>
               </div>
               <div className="mt-4">
                 <button

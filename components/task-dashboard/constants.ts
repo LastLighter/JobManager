@@ -22,6 +22,7 @@ export const ROUND_STATUS_BADGES: Record<TaskRoundLifecycle, string> = {
 
 export const TASK_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 export const ROUND_PAGE_SIZE_OPTIONS = [5, 10, 20];
+export const NODE_PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 
 export const statusBadgeStyles: Record<TaskStatus, string> = {
   pending: "bg-amber-100 text-amber-600",

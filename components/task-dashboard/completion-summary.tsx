@@ -47,6 +47,8 @@ export function CompletionSummary({
     averageItemSpeedText !== "-" && runStats.averageItemSpeed !== null
       ? `约 ${formatSpeed(runStats.averageItemSpeed, "项/秒")}`
       : undefined;
+  const averageTimePerItemText = formatSeconds(runStats.averageTimePerItem);
+  const averageTimePer100ItemsText = formatSeconds(runStats.averageTimePer100Items);
 
   const hasItemStats = runStats.totalItemNum > 0 || runStats.totalRunningTime > 0;
 
@@ -81,6 +83,14 @@ export function CompletionSummary({
         label: "平均项速度",
         value: averageItemSpeedText,
         subValue: averageItemSpeedSub,
+      },
+      {
+        label: "平均每项耗时",
+        value: averageTimePerItemText,
+      },
+      {
+        label: "每100项耗时",
+        value: averageTimePer100ItemsText,
       },
     );
   }

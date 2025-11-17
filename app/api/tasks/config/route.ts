@@ -11,17 +11,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const currentConfig = getBatchSizeConfig();
-    
-    // Validate defaultBatchSize
-    if (body.defaultBatchSize !== undefined) {
-      const value = Number(body.defaultBatchSize);
-      if (!Number.isFinite(value) || value < 1 || value > currentConfig.maxBatchSize) {
-        return NextResponse.json(
-          { error: `默认批次大小必须在 1 到 ${currentConfig.maxBatchSize} 之间` },
-          { status: 400 }
-        );
-      }
-    }
+    const updates: Partial<ReturnType<typeof getBatchSizeConfig>> = {};
     
     // Validate maxBatchSize
     if (body.maxBatchSize !== undefined) {
@@ -32,9 +22,55 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+      updates.maxBatchSize = Math.floor(value);
+    }
+
+    // Validate defaultBatchSize (use pending max value if provided)
+    if (body.defaultBatchSize !== undefined) {
+      const value = Number(body.defaultBatchSize);
+      const targetMax = updates.maxBatchSize ?? currentConfig.maxBatchSize;
+      if (!Number.isFinite(value) || value < 1 || value > targetMax) {
+        return NextResponse.json(
+          { error: `默认批次大小必须在 1 到 ${targetMax} 之间` },
+          { status: 400 },
+        );
+      }
+      updates.defaultBatchSize = Math.floor(value);
+    }
+
+    if (body.feishuWebhookUrl !== undefined) {
+      if (body.feishuWebhookUrl === null) {
+        updates.feishuWebhookUrl = null;
+      } else if (typeof body.feishuWebhookUrl === "string") {
+        const trimmed = body.feishuWebhookUrl.trim();
+        if (trimmed.length === 0) {
+          updates.feishuWebhookUrl = null;
+        } else if (!/^https:\/\//i.test(trimmed)) {
+          return NextResponse.json(
+            { error: "飞书 Webhook 地址需以 https:// 开头" },
+            { status: 400 },
+          );
+        } else {
+          updates.feishuWebhookUrl = trimmed;
+        }
+      } else {
+        return NextResponse.json(
+          { error: "飞书 Webhook 地址格式不正确" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (updates.maxBatchSize !== undefined && updates.defaultBatchSize !== undefined) {
+      if (updates.defaultBatchSize > updates.maxBatchSize) {
+        return NextResponse.json(
+          { error: `默认批次大小必须在 1 到 ${updates.maxBatchSize} 之间` },
+          { status: 400 }
+        );
+      }
     }
     
-    const updatedConfig = updateBatchSizeConfig(body);
+    const updatedConfig = updateBatchSizeConfig(updates);
     
     return NextResponse.json({
       success: true,

@@ -4,11 +4,17 @@ import { taskStore } from "@/lib/taskStore";
 
 export async function GET(request: NextRequest) {
   const roundId = request.nextUrl.searchParams.get("roundId") ?? undefined;
-  const stats = taskStore.getAllNodeStats(roundId);
+  const pageParam = Number.parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10);
+  const pageSizeParam = Number.parseInt(request.nextUrl.searchParams.get("pageSize") ?? "10", 10);
+  const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+  const pageSize = Number.isFinite(pageSizeParam) && pageSizeParam > 0 ? Math.min(pageSizeParam, 200) : 10;
+
+  const { nodes, total, page: effectivePage } = taskStore.getNodeStatsPage(page, pageSize, roundId);
   const summary = taskStore.getNodeStatsSummary(roundId);
+  const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
 
   return NextResponse.json({
-    nodes: stats.map((node) => ({
+    nodes: nodes.map((node) => ({
       nodeId: node.nodeId,
       totalItemNum: node.totalItemNum,
       totalRunningTime: node.totalRunningTime,
@@ -34,6 +40,10 @@ export async function GET(request: NextRequest) {
       totalActiveTasks: 0,
     },
     roundId: roundId ?? null,
+    page: effectivePage,
+    pageSize,
+    total,
+    totalPages,
   });
 }
 
