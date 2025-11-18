@@ -1,6 +1,5 @@
 import { randomUUID } from "crypto";
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -9,7 +8,6 @@ import {
   renameSync,
   rmSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from "fs";
 import path from "path";
@@ -33,8 +31,6 @@ export interface TaskRecord {
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const ROUNDS_DIR = path.join(DATA_DIR, "rounds");
-const NODE_ARCHIVE_DIR = path.join(DATA_DIR, "node-history");
-const NODE_STATS_FILE = path.join(DATA_DIR, "node-stats.json");
 const MAX_ROUND_NAME_LENGTH = 64;
 
 function sanitizeRoundName(rawName: string | undefined | null): string | undefined {
@@ -66,44 +62,11 @@ function ensureRoundsDir() {
   if (!existsSync(ROUNDS_DIR)) {
     mkdirSync(ROUNDS_DIR, { recursive: true });
   }
-  if (!existsSync(NODE_ARCHIVE_DIR)) {
-    mkdirSync(NODE_ARCHIVE_DIR, { recursive: true });
-  }
 }
 
 function getRoundFilePath(roundId: string) {
   ensureRoundsDir();
   return path.join(ROUNDS_DIR, `${roundId}.json`);
-}
-
-function getNodeArchiveFilePath(nodeId: string) {
-  ensureRoundsDir();
-  const safeNodeId = nodeId.replace(/[^a-zA-Z0-9_\-]/g, "_");
-  return path.join(NODE_ARCHIVE_DIR, `${safeNodeId}.jsonl`);
-}
-
-function removeNodeArchive(nodeId?: string) {
-  ensureRoundsDir();
-  if (nodeId) {
-    const safeNodeId = nodeId.replace(/[^a-zA-Z0-9_\-]/g, "_");
-    const filePath = path.join(NODE_ARCHIVE_DIR, `${safeNodeId}.jsonl`);
-    if (existsSync(filePath)) {
-      try {
-        rmSync(filePath, { force: true });
-      } catch (error) {
-        console.error(`删除节点 ${nodeId} 的归档文件失败:`, error);
-      }
-    }
-    return;
-  }
-
-  if (existsSync(NODE_ARCHIVE_DIR)) {
-    try {
-      rmSync(NODE_ARCHIVE_DIR, { recursive: true, force: true });
-    } catch (error) {
-      console.error("清理节点归档目录失败:", error);
-    }
-  }
 }
 
 export interface PaginatedTasks {
@@ -204,10 +167,6 @@ export interface NodeStatsSummary {
   totalActiveTasks: number;
 }
 
-interface NodeStoreSnapshot {
-  nodes: NodeStats[];
-}
-
 class NodeStatisticsStore {
   private nodeStats = new Map<string, NodeStats>();
   private nodeActiveTasks = new Map<string, Set<string>>();
@@ -216,7 +175,7 @@ class NodeStatisticsStore {
   private static readonly NODE_RECENT_WINDOW_MS = 2 * 60 * 60 * 1000;
 
   constructor() {
-    this.loadFromDisk();
+    // 节点统计仅保存在内存中，无需加载持久化文件
   }
 
   recordRequest(nodeId: string) {
@@ -397,8 +356,6 @@ class NodeStatisticsStore {
     this.nodeStats.clear();
     this.nodeActiveTasks.clear();
     this.taskToNode.clear();
-    removeNodeArchive();
-    this.persist();
     return { cleared };
   }
 
@@ -414,76 +371,11 @@ class NodeStatisticsStore {
         this.taskToNode.delete(taskId);
       }
     }
-    removeNodeArchive(normalized);
-    if (deleted) {
-      this.persist();
-    }
     return { deleted };
   }
 
-  private loadFromDisk() {
-    ensureRoundsDir();
-    if (!existsSync(NODE_STATS_FILE)) {
-      return;
-    }
-    try {
-      const raw = readFileSync(NODE_STATS_FILE, "utf-8");
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw) as Partial<NodeStoreSnapshot>;
-      if (!parsed || !Array.isArray(parsed.nodes)) {
-        return;
-      }
-      for (const node of parsed.nodes) {
-        if (!node || typeof node.nodeId !== "string") {
-          continue;
-        }
-        const sanitized = this.sanitizeNode(node);
-        const activeIds = Array.isArray(node.activeTaskIds)
-          ? node.activeTaskIds.filter(
-              (id): id is string => typeof id === "string" && id.trim().length > 0,
-            )
-          : [];
-        if (activeIds.length > 0) {
-          const activeSet = new Set<string>(activeIds);
-          this.nodeActiveTasks.set(sanitized.nodeId, activeSet);
-          for (const taskId of activeIds) {
-            this.taskToNode.set(taskId, sanitized.nodeId);
-          }
-        }
-        sanitized.activeTaskIds = [...activeIds];
-        sanitized.recentRecords = Array.isArray(node.recentRecords)
-          ? node.recentRecords
-              .map((record) => this.sanitizeRecord(record))
-              .filter(
-                (record): record is NodePerformanceRecord => record !== null,
-              )
-          : [];
-        this.nodeStats.set(sanitized.nodeId, sanitized);
-      }
-    } catch (error) {
-      console.error("加载节点统计失败:", error);
-    }
-  }
-
   private persist() {
-    try {
-      ensureRoundsDir();
-      const snapshot: NodeStoreSnapshot = {
-        nodes: [...this.nodeStats.values()].map((node) => {
-          const activeSet = this.nodeActiveTasks.get(node.nodeId);
-          return {
-            ...node,
-            activeTaskIds: activeSet ? [...activeSet] : [...node.activeTaskIds],
-            recentRecords: node.recentRecords.map((record) => ({ ...record })),
-          };
-        }),
-      };
-      writeFileSync(NODE_STATS_FILE, JSON.stringify(snapshot));
-    } catch (error) {
-      console.error("持久化节点统计失败:", error);
-    }
+    // 节点统计改为仅存储于内存，不再落盘
   }
 
   private getOrCreateNodeStats(
@@ -553,82 +445,6 @@ class NodeStatisticsStore {
     }
   }
 
-  private sanitizeNode(node: Partial<NodeStats>): NodeStats {
-    const nodeId =
-      typeof node.nodeId === "string" && node.nodeId.trim().length > 0
-        ? node.nodeId.trim()
-        : `node_${randomUUID()}`;
-    const totalItemNum = Number.isFinite(node.totalItemNum)
-      ? Number(node.totalItemNum)
-      : 0;
-    const totalRunningTime = Number.isFinite(node.totalRunningTime)
-      ? Number(node.totalRunningTime)
-      : 0;
-    const recordCount = Number.isFinite(node.recordCount)
-      ? Number(node.recordCount)
-      : 0;
-    const archivedRecordCount = Number.isFinite(node.archivedRecordCount)
-      ? Number(node.archivedRecordCount)
-      : 0;
-    const archivedItemNum = Number.isFinite(node.archivedItemNum)
-      ? Number(node.archivedItemNum)
-      : 0;
-    const archivedRunningTime = Number.isFinite(node.archivedRunningTime)
-      ? Number(node.archivedRunningTime)
-      : 0;
-    const avgSpeed = Number.isFinite(node.avgSpeed) ? Number(node.avgSpeed) : 0;
-    const avgTimePer100Items = Number.isFinite(node.avgTimePer100Items)
-      ? Number(node.avgTimePer100Items)
-      : 0;
-    const lastUpdated = Number.isFinite(node.lastUpdated)
-      ? Number(node.lastUpdated)
-      : Date.now();
-    const requestCount = Number.isFinite(node.requestCount)
-      ? Number(node.requestCount)
-      : 0;
-    const assignedTaskCount = Number.isFinite(node.assignedTaskCount)
-      ? Number(node.assignedTaskCount)
-      : 0;
-
-    return {
-      nodeId,
-      totalItemNum,
-      totalRunningTime,
-      recordCount,
-      archivedRecordCount,
-      archivedItemNum,
-      archivedRunningTime,
-      avgSpeed,
-      avgTimePer100Items,
-      lastUpdated,
-      recentRecords: [],
-      requestCount,
-      assignedTaskCount,
-      activeTaskIds: [],
-    };
-  }
-
-  private sanitizeRecord(record: any): NodePerformanceRecord | null {
-    if (!record || typeof record !== "object") {
-      return null;
-    }
-    const timestamp = Number(record.timestamp);
-    if (!Number.isFinite(timestamp)) {
-      return null;
-    }
-    const itemNum = Number.isFinite(record.itemNum) ? Number(record.itemNum) : 0;
-    const runningTime = Number.isFinite(record.runningTime)
-      ? Number(record.runningTime)
-      : 0;
-    const speed = Number.isFinite(record.speed) ? Number(record.speed) : 0;
-    return {
-      timestamp,
-      itemNum,
-      runningTime,
-      speed,
-    };
-  }
-
   private trimAndArchiveNodeRecords(stats: NodeStats, referenceTime: number) {
     if (stats.recentRecords.length === 0) {
       return;
@@ -666,23 +482,9 @@ class NodeStatisticsStore {
       stats.archivedRecordCount += toArchive.length;
       stats.archivedItemNum += archivedItemNum;
       stats.archivedRunningTime += archivedRunningTime;
-      this.appendNodeArchive(stats.nodeId, toArchive);
     }
 
     stats.recentRecords = keep;
-  }
-
-  private appendNodeArchive(nodeId: string, records: NodePerformanceRecord[]) {
-    if (records.length === 0) {
-      return;
-    }
-
-    try {
-      const payload = records.map((record) => JSON.stringify(record)).join("\n") + "\n";
-      appendFileSync(getNodeArchiveFilePath(nodeId), payload);
-    } catch (error) {
-      console.error(`写入节点 ${nodeId} 的归档记录失败:`, error);
-    }
   }
 
   private updateNodeAggregates(stats: NodeStats) {
