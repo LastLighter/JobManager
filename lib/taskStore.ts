@@ -1,5 +1,17 @@
 import { randomUUID } from "crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "fs";
 import path from "path";
 
 import { getFeishuWebhookUrl } from "./batchSizeConfig";
@@ -1507,6 +1519,60 @@ class SingleRoundStore {
     return [...this.tasks.keys()];
   }
 
+  *iterateTasks(): IterableIterator<TaskRecord> {
+    for (const task of this.tasks.values()) {
+      yield task;
+    }
+  }
+
+  *iteratePendingQueueOrder(): IterableIterator<string> {
+    for (const id of this.pendingQueue) {
+      if (!id) {
+        continue;
+      }
+      yield id;
+    }
+  }
+
+  *iterateProcessingStartedAtEntries(): IterableIterator<[string, number]> {
+    for (const [id, startedAt] of this.processingStartedAt.entries()) {
+      if (!this.tasks.has(id) || !this.processingSet.has(id)) {
+        continue;
+      }
+      if (typeof startedAt === "number" && Number.isFinite(startedAt)) {
+        yield [id, startedAt];
+      }
+    }
+  }
+
+  *iterateCompletedTaskIds(): IterableIterator<string> {
+    for (const id of this.completedList) {
+      if (this.completedSet.has(id) && this.tasks.has(id)) {
+        yield id;
+      }
+    }
+  }
+
+  *iterateFailedTaskIds(): IterableIterator<string> {
+    for (const id of this.failedList) {
+      if (this.failedSet.has(id) && this.tasks.has(id)) {
+        yield id;
+      }
+    }
+  }
+
+  getTotalProcessedItemNumForPersistence(): number {
+    return this.totalProcessedItemNum;
+  }
+
+  getTotalProcessedRunningTimeForPersistence(): number {
+    return this.totalProcessedRunningTime;
+  }
+
+  getLastProcessedAtForPersistence(): number | null {
+    return this.lastProcessedAt ?? null;
+  }
+
 }
 
 interface RoundEntry {
@@ -1523,6 +1589,107 @@ interface RoundEntry {
   processedSnapshot: ProcessedSnapshot;
   isDirty: boolean;
   hasPersisted: boolean;
+}
+
+function writeJsonArray<T>(
+  write: (chunk: string) => void,
+  iterable: Iterable<T>,
+  serialize: (item: T) => string,
+) {
+  write("[");
+  let first = true;
+  for (const item of iterable) {
+    if (!first) {
+      write(",");
+    }
+    write(serialize(item));
+    first = false;
+  }
+  write("]");
+}
+
+function persistRoundSnapshotToDisk(entry: RoundEntry, store: SingleRoundStore) {
+  ensureRoundsDir();
+  const counts = store.getCounts();
+  const metadata = {
+    id: entry.id,
+    name: entry.name,
+    sourceType: entry.sourceType,
+    sourceHint: entry.sourceHint,
+    createdAt: entry.createdAt,
+    activatedAt: entry.activatedAt,
+    completedAt: entry.completedAt,
+    status: entry.status,
+    counts,
+  };
+
+  const filePath = getRoundFilePath(entry.id);
+  const tempPath = `${filePath}.tmp-${Date.now()}-${randomUUID()}`;
+  let fd: number | null = null;
+
+  try {
+    fd = openSync(tempPath, "w");
+    const write = (chunk: string) => {
+      writeSync(fd!, chunk);
+    };
+
+    write("{\"metadata\":");
+    write(JSON.stringify(metadata));
+    write(",\"store\":{");
+
+    write("\"roundId\":");
+    write(JSON.stringify(entry.id));
+
+    write(",\"tasks\":");
+    writeJsonArray(write, store.iterateTasks(), (task) => JSON.stringify(task));
+
+    write(",\"pendingQueue\":");
+    writeJsonArray(write, store.iteratePendingQueueOrder(), (id) => JSON.stringify(id));
+
+    write(",\"processingStartedAt\":");
+    writeJsonArray(write, store.iterateProcessingStartedAtEntries(), (pair) => JSON.stringify(pair));
+
+    write(",\"completedList\":");
+    writeJsonArray(write, store.iterateCompletedTaskIds(), (id) => JSON.stringify(id));
+
+    write(",\"failedList\":");
+    writeJsonArray(write, store.iterateFailedTaskIds(), (id) => JSON.stringify(id));
+
+    write(",\"totalProcessedItemNum\":");
+    write(String(store.getTotalProcessedItemNumForPersistence()));
+
+    write(",\"totalProcessedRunningTime\":");
+    write(String(store.getTotalProcessedRunningTimeForPersistence()));
+
+    write(",\"lastProcessedAt\":");
+    const lastProcessedAt = store.getLastProcessedAtForPersistence();
+    write(lastProcessedAt === null ? "null" : String(lastProcessedAt));
+
+    write("}}");
+  } finally {
+    if (fd !== null) {
+      closeSync(fd);
+    }
+  }
+
+  try {
+    if (existsSync(filePath)) {
+      rmSync(filePath, { force: true });
+    }
+    renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // ignore cleanup error
+    }
+    throw error;
+  }
+
+  entry.countsSnapshot = counts;
+  entry.processedSnapshot = store.getProcessedSnapshot();
+  entry.isDirty = false;
+  entry.hasPersisted = true;
 }
 
 class TaskStore {
@@ -1598,27 +1765,7 @@ class TaskStore {
     }
 
     try {
-      const counts = entry.store.getCounts();
-      const payload: PersistedRoundFile = {
-        metadata: {
-          id: entry.id,
-          name: entry.name,
-          sourceType: entry.sourceType,
-          sourceHint: entry.sourceHint,
-          createdAt: entry.createdAt,
-          activatedAt: entry.activatedAt,
-          completedAt: entry.completedAt,
-          status: entry.status,
-          counts,
-        },
-        store: entry.store.toSnapshot(),
-      };
-
-      writeFileSync(getRoundFilePath(entry.id), JSON.stringify(payload));
-      entry.countsSnapshot = counts;
-      entry.processedSnapshot = entry.store.getProcessedSnapshot();
-      entry.isDirty = false;
-      entry.hasPersisted = true;
+      persistRoundSnapshotToDisk(entry, entry.store);
 
       if (options.unload) {
         this.unloadRoundEntry(entry, { deregister: options.deregister });
