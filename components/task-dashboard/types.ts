@@ -195,6 +195,8 @@ export interface GlobalCompletionStats {
   totalRounds: number;
   completedRounds: number;
   totalTasks: number;
+  pendingTasks: number;
+  processingTasks: number;
   completedTasks: number;
   failedTasks: number;
   totalProcessedItems: number;

@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   try {
     const tasks = taskStore.getTasksForProcessing(size, requestedRoundId, requestedNodeId);
-    console.debug("[任务获取][POST] 分配任务成功", {
+    const logContext = {
       requestedBatchSize,
       fallbackBatchSize,
       safeMaxBatchSize,
@@ -42,7 +42,12 @@ export async function POST(request: Request) {
       roundId: requestedRoundId ?? null,
       nodeId: requestedNodeId ?? null,
       deliveredTaskCount: tasks.length,
-    });
+    };
+    if (tasks.length === 0) {
+      console.debug("[任务获取][POST] 当前没有可分配任务", logContext);
+    } else {
+      console.debug("[任务获取][POST] 分配任务成功", logContext);
+    }
 
     return NextResponse.json(
       tasks.map((task) => ({
@@ -75,12 +80,17 @@ export async function GET(request: Request) {
 
   try {
     const tasks = taskStore.getTasksForProcessing(fallbackBatchSize, roundId, nodeId ?? undefined);
-    console.debug("[任务获取][GET] 分配任务成功", {
+    const logContext = {
       batchSize: fallbackBatchSize,
       roundId: roundId ?? null,
       nodeId: nodeId ?? null,
       deliveredTaskCount: tasks.length,
-    });
+    };
+    if (tasks.length === 0) {
+      console.debug("[任务获取][GET] 当前没有可分配任务", logContext);
+    } else {
+      console.debug("[任务获取][GET] 分配任务成功", logContext);
+    }
 
     return NextResponse.json(
       tasks.map((task) => ({

@@ -77,6 +77,12 @@ export function TaskDashboard() {
   const [defaultBatchSize, setDefaultBatchSize] = useState(8);
   const [maxBatchSize, setMaxBatchSize] = useState(1000);
   const [feishuWebhookUrl, setFeishuWebhookUrl] = useState("");
+  const [feishuReportIntervalHours, setFeishuReportIntervalHours] = useState(4);
+  const [feishuLastReportAt, setFeishuLastReportAt] = useState<number | null>(null);
+  const [feishuNextReportAt, setFeishuNextReportAt] = useState<number | null>(null);
+  const [feishuReportingEnabled, setFeishuReportingEnabled] = useState(false);
+  const [feishuReportInFlight, setFeishuReportInFlight] = useState(false);
+  const [isTriggeringFeishuReport, setIsTriggeringFeishuReport] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -225,9 +231,21 @@ export function TaskDashboard() {
         const data = await response.json();
         setDefaultBatchSize(data.defaultBatchSize);
         setMaxBatchSize(data.maxBatchSize);
-        setFeishuWebhookUrl(
-          typeof data.feishuWebhookUrl === "string" ? data.feishuWebhookUrl : "",
+        setFeishuWebhookUrl(typeof data.feishuWebhookUrl === "string" ? data.feishuWebhookUrl : "");
+        const intervalMinutesRaw = Number(data.feishuReportIntervalMinutes);
+        const intervalMinutes =
+          Number.isFinite(intervalMinutesRaw) && intervalMinutesRaw >= 0
+            ? intervalMinutesRaw
+            : 240;
+        setFeishuReportIntervalHours(intervalMinutes / 60);
+        setFeishuLastReportAt(
+          typeof data.feishuLastReportAt === "number" ? data.feishuLastReportAt : null,
         );
+        setFeishuNextReportAt(
+          typeof data.feishuNextReportAt === "number" ? data.feishuNextReportAt : null,
+        );
+        setFeishuReportingEnabled(Boolean(data.feishuReportingEnabled));
+        setFeishuReportInFlight(Boolean(data.feishuReportInFlight));
       }
     } catch (err) {
       console.error("获取批次大小配置失败", err);
@@ -256,6 +274,15 @@ export function TaskDashboard() {
   const completedRoundsCount = roundStats?.statusCounts.completed ?? 0;
   const totalRoundsCount = roundStats?.totalRounds ?? 0;
   const aggregateItemStats = roundStats?.aggregateItemStats ?? null;
+  const trimmedFeishuWebhook = feishuWebhookUrl.trim();
+  const feishuLastReportLabel = feishuLastReportAt ? formatDate(feishuLastReportAt) : "尚未发送";
+  const feishuNextReportLabel = feishuReportInFlight
+    ? "发送中..."
+    : feishuNextReportAt
+        ? formatDate(feishuNextReportAt)
+        : feishuReportingEnabled
+          ? "等待调度"
+          : "未启用";
 
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard
@@ -707,6 +734,7 @@ export function TaskDashboard() {
     setIsSavingConfig(true);
     setError(null);
     setInfoMessage(null);
+    const intervalMinutes = Math.max(0, Math.round(feishuReportIntervalHours * 60));
 
     try {
       const response = await fetch("/api/tasks/config", {
@@ -718,6 +746,7 @@ export function TaskDashboard() {
           defaultBatchSize,
           maxBatchSize,
           feishuWebhookUrl: trimmedWebhook.length > 0 ? trimmedWebhook : null,
+          feishuReportIntervalMinutes: intervalMinutes,
         }),
       });
 
@@ -732,12 +761,90 @@ export function TaskDashboard() {
       setFeishuWebhookUrl(
         typeof result.feishuWebhookUrl === "string" ? result.feishuWebhookUrl : "",
       );
+      const nextIntervalMinutes =
+        typeof result.feishuReportIntervalMinutes === "number"
+          ? Math.max(0, result.feishuReportIntervalMinutes)
+          : intervalMinutes;
+      setFeishuReportIntervalHours(nextIntervalMinutes / 60);
+      setFeishuLastReportAt(
+        typeof result.feishuLastReportAt === "number" ? result.feishuLastReportAt : null,
+      );
+      setFeishuNextReportAt(
+        typeof result.feishuNextReportAt === "number" ? result.feishuNextReportAt : null,
+      );
+      setFeishuReportingEnabled(Boolean(result.feishuReportingEnabled));
+      setFeishuReportInFlight(Boolean(result.feishuReportInFlight));
       setInfoMessage("系统配置已保存");
     } catch (err) {
       console.error("保存批次大小配置失败", err);
       setError(err instanceof Error ? err.message : "保存配置失败，请稍后重试。");
     } finally {
       setIsSavingConfig(false);
+    }
+  };
+
+  const handleTriggerFeishuReport = async () => {
+    const trimmedWebhook = feishuWebhookUrl.trim();
+    if (!trimmedWebhook) {
+      setError("请先配置并保存飞书 Webhook 地址");
+      return;
+    }
+
+    try {
+      setIsTriggeringFeishuReport(true);
+      setFeishuReportInFlight(true);
+      setError(null);
+      setInfoMessage(null);
+
+      const response = await fetch("/api/tasks/report_feishu", {
+        method: "POST",
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error || "飞书汇报发送失败，请稍后重试。");
+      }
+
+      setInfoMessage("已向飞书发送最新任务汇报");
+
+      if (typeof result.lastReportAt === "number") {
+        setFeishuLastReportAt(result.lastReportAt);
+      } else {
+        setFeishuLastReportAt((prev) => prev);
+      }
+
+      if (typeof result.nextReportAt === "number" || result.nextReportAt === null) {
+        setFeishuNextReportAt(result.nextReportAt ?? null);
+      }
+
+      if (result.reportingState) {
+        const state = result.reportingState as {
+          intervalMinutes?: number;
+          lastReportAt?: number | null;
+          nextReportAt?: number | null;
+          reportingEnabled?: boolean;
+          inFlight?: boolean;
+        };
+        if (typeof state.intervalMinutes === "number" && state.intervalMinutes >= 0) {
+          setFeishuReportIntervalHours(state.intervalMinutes / 60);
+        }
+        if (typeof state.lastReportAt === "number" || state.lastReportAt === null) {
+          setFeishuLastReportAt(state.lastReportAt ?? null);
+        }
+        if (typeof state.nextReportAt === "number" || state.nextReportAt === null) {
+          setFeishuNextReportAt(state.nextReportAt ?? null);
+        }
+        setFeishuReportingEnabled(Boolean(state.reportingEnabled));
+        setFeishuReportInFlight(Boolean(state.inFlight));
+      } else {
+        setFeishuReportInFlight(false);
+      }
+    } catch (err) {
+      console.error("手动发送飞书汇报失败", err);
+      setFeishuReportInFlight(false);
+      setError(err instanceof Error ? err.message : "飞书汇报发送失败，请稍后重试。");
+    } finally {
+      setIsTriggeringFeishuReport(false);
     }
   };
 
@@ -1430,6 +1537,43 @@ export function TaskDashboard() {
                 <p className="mt-1 text-xs text-slate-400">
                   需使用飞书自定义机器人提供的 HTTPS 地址，包含安全关键词时请确保通知内容满足对应规则。
                 </p>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <label className="flex flex-col gap-2">
+                    <span className="text-sm font-medium text-slate-700">定时汇报间隔（小时）</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-800 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      value={feishuReportIntervalHours}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        setFeishuReportIntervalHours(Number.isFinite(value) ? Math.max(0, value) : 0);
+                      }}
+                    />
+                    <p className="text-xs text-slate-500">默认 4 小时，设置为 0 可关闭定时汇报。</p>
+                  </label>
+                  <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white/70 p-3">
+                    <span className="text-sm font-medium text-slate-700">汇报状态</span>
+                    <span className="text-xs text-slate-500">最近发送：{feishuLastReportLabel}</span>
+                    <span className="text-xs text-slate-500">下次计划：{feishuNextReportLabel}</span>
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void handleTriggerFeishuReport()}
+                      disabled={
+                        isTriggeringFeishuReport ||
+                        feishuReportInFlight ||
+                        trimmedFeishuWebhook.length === 0
+                      }
+                    >
+                      {isTriggeringFeishuReport ? "发送中..." : "立即发送飞书汇报"}
+                    </button>
+                    {trimmedFeishuWebhook.length === 0 && (
+                      <span className="text-xs text-amber-600">请先配置 Webhook 地址后保存</span>
+                    )}
+                  </div>
+                </div>
               </div>
               <div className="mt-4">
                 <button

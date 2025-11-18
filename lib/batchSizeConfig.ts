@@ -5,10 +5,12 @@ interface TaskManagerConfig {
   defaultBatchSize: number;
   maxBatchSize: number;
   feishuWebhookUrl: string | null;
+  feishuReportIntervalMinutes: number;
 }
 
 const DEFAULT_BATCH_SIZE = 8;
 const DEFAULT_MAX_BATCH_SIZE = 1000;
+const DEFAULT_FEISHU_REPORT_INTERVAL_MINUTES = 240;
 
 function parsePositiveInt(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value) && value >= 1) {
@@ -17,6 +19,19 @@ function parsePositiveInt(value: unknown, fallback: number): number {
   if (typeof value === "string") {
     const parsed = Number.parseInt(value, 10);
     if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+  }
+  return fallback;
+}
+
+function parseNonNegativeInt(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
       return Math.floor(parsed);
     }
   }
@@ -43,6 +58,10 @@ const config: TaskManagerConfig = {
   defaultBatchSize: parsePositiveInt(process.env.TASK_BATCH_SIZE, DEFAULT_BATCH_SIZE),
   maxBatchSize: parsePositiveInt(process.env.TASK_BATCH_MAX, DEFAULT_MAX_BATCH_SIZE),
   feishuWebhookUrl: sanitizeWebhookUrl(initialWebhookEnv),
+  feishuReportIntervalMinutes: parseNonNegativeInt(
+    process.env.FEISHU_REPORT_INTERVAL_MINUTES,
+    DEFAULT_FEISHU_REPORT_INTERVAL_MINUTES,
+  ),
 };
 
 if (config.defaultBatchSize > config.maxBatchSize) {
@@ -73,6 +92,11 @@ export function updateBatchSizeConfig(updates: Partial<TaskManagerConfig>): Task
 
   if (updates.feishuWebhookUrl !== undefined) {
     config.feishuWebhookUrl = sanitizeWebhookUrl(updates.feishuWebhookUrl);
+  }
+
+  if (updates.feishuReportIntervalMinutes !== undefined) {
+    const value = parseNonNegativeInt(updates.feishuReportIntervalMinutes, config.feishuReportIntervalMinutes);
+    config.feishuReportIntervalMinutes = Math.max(0, value);
   }
 
   return { ...config };

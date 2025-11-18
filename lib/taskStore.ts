@@ -12,7 +12,8 @@ import {
 } from "fs";
 import path from "path";
 
-import { getFeishuWebhookUrl } from "./batchSizeConfig";
+import { getBatchSizeConfig, getFeishuWebhookUrl } from "./batchSizeConfig";
+import { completedTaskArchive } from "./completedTaskArchive";
 
 export type TaskStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -27,6 +28,7 @@ export interface TaskRecord {
   updatedAt: number;
   processingStartedAt?: number;
   processingNodeId?: string;
+  archivedAt?: number;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -591,6 +593,8 @@ export interface GlobalCompletionStats {
   totalRounds: number;
   completedRounds: number;
   totalTasks: number;
+  pendingTasks: number;
+  processingTasks: number;
   completedTasks: number;
   failedTasks: number;
   totalProcessedItems: number;
@@ -600,6 +604,18 @@ export interface GlobalCompletionStats {
   allRoundsCompleted: boolean;
   generatedAt: number;
 }
+
+export interface FeishuReportingState {
+  intervalMinutes: number;
+  intervalMs: number;
+  lastReportAt: number | null;
+  nextReportAt: number | null;
+  reportingEnabled: boolean;
+  webhookConfigured: boolean;
+  inFlight: boolean;
+}
+
+type FeishuReportReason = "scheduled" | "manual" | "completion";
 
 interface PersistedRoundFile {
   metadata: {
@@ -684,6 +700,7 @@ class SingleRoundStore {
         failureCount: 0,
         createdAt: now,
         updatedAt: now,
+        archivedAt: undefined,
       };
 
       this.tasks.set(id, task);
@@ -770,9 +787,15 @@ class SingleRoundStore {
         this.removeIdFromList(this.failedList, taskId);
       }
 
-      if (!this.completedSet.has(taskId)) {
+      const firstCompletion = !this.completedSet.has(taskId);
+      if (firstCompletion) {
         this.completedSet.add(taskId);
         this.completedList.unshift(taskId);
+      }
+
+      if (!task.archivedAt) {
+        completedTaskArchive.record(task.id, task.path);
+        task.archivedAt = Date.now();
       }
 
       return { ok: true as const, status: task.status };
@@ -954,6 +977,13 @@ class SingleRoundStore {
 
   clearAllTasks(): { cleared: number } {
     const clearedCount = this.tasks.size;
+
+    for (const task of this.tasks.values()) {
+      if (task.status === "completed" && !task.archivedAt) {
+        completedTaskArchive.record(task.id, task.path);
+        task.archivedAt = Date.now();
+      }
+    }
 
     for (const task of this.tasks.values()) {
       if (task.processingNodeId) {
@@ -1501,8 +1531,20 @@ class TaskStore {
   private taskIdToRoundId = new Map<string, string>();
   private roundSequence = 1;
   private completionDigest: string | null = null;
+  private feishuReportTimer: NodeJS.Timeout | null = null;
+  private feishuLastReportAt: number | null = null;
+  private feishuNextReportAt: number | null = null;
+  private feishuReportIntervalMs = 0;
+  private feishuReportInFlight = false;
   private readonly nodeStore = new NodeStatisticsStore();
   private readonly numberFormatter = new Intl.NumberFormat("zh-CN");
+
+  constructor() {
+    const config = getBatchSizeConfig();
+    const intervalMinutes = Math.max(0, config.feishuReportIntervalMinutes ?? 0);
+    this.feishuReportIntervalMs = intervalMinutes * 60 * 1000;
+    this.scheduleNextFeishuReport();
+  }
 
   private generateRoundId(): string {
     const next = this.roundSequence.toString().padStart(4, "0");
@@ -2319,6 +2361,8 @@ class TaskStore {
         totalRounds: 0,
         completedRounds: 0,
         totalTasks: 0,
+        pendingTasks: 0,
+        processingTasks: 0,
         completedTasks: 0,
         failedTasks: 0,
         totalProcessedItems: 0,
@@ -2331,6 +2375,8 @@ class TaskStore {
     }
 
     let totalTasks = 0;
+    let pendingTasks = 0;
+    let processingTasks = 0;
     let completedTasks = 0;
     let failedTasks = 0;
     let totalProcessedItems = 0;
@@ -2344,6 +2390,8 @@ class TaskStore {
       }
       const counts = this.getCountsForEntry(entry);
       totalTasks += counts.total;
+      pendingTasks += counts.pending;
+      processingTasks += counts.processing;
       completedTasks += counts.completed;
       failedTasks += counts.failed;
 
@@ -2362,6 +2410,8 @@ class TaskStore {
       totalRounds: this.rounds.size,
       completedRounds,
       totalTasks,
+      pendingTasks,
+      processingTasks,
       completedTasks,
       failedTasks,
       totalProcessedItems,
@@ -2412,6 +2462,8 @@ class TaskStore {
       totalRounds: stats.totalRounds,
       completedRounds: stats.completedRounds,
       totalTasks: stats.totalTasks,
+      pendingTasks: stats.pendingTasks,
+      processingTasks: stats.processingTasks,
       completedTasks: stats.completedTasks,
       failedTasks: stats.failedTasks,
       totalProcessedItems: Number(stats.totalProcessedItems.toFixed(2)),
@@ -2419,19 +2471,150 @@ class TaskStore {
     });
   }
 
-  private buildFeishuMessage(stats: GlobalCompletionStats): string {
-    const lines = [
-      "任务轮全部完成 ✅",
-      `完成进度：${this.formatCount(stats.completedRounds)} / ${this.formatCount(stats.totalRounds)}`,
-      `任务完成：成功 ${this.formatCount(stats.completedTasks)} / 总计 ${this.formatCount(stats.totalTasks)}`,
-      `任务失败：${this.formatCount(stats.failedTasks)}`,
-      `节点累计运行时长：${this.formatSecondsForMessage(stats.totalRunningTime)}`,
-      `累计处理项数：${this.formatCount(stats.totalProcessedItems)}`,
-      `平均每项耗时：${this.formatSecondsForMessage(stats.averageTimePerItem)}`,
-      `平均每100项耗时：${this.formatSecondsForMessage(stats.averageTimePer100Items)}`,
-      `统计时间：${new Date(stats.generatedAt).toLocaleString()}`,
-    ];
-    return lines.join("\n");
+  private buildFeishuReportMessage(stats: GlobalCompletionStats): string {
+    const headline = `全部任务：${this.formatCount(stats.totalTasks)} 个（未处理 ${this.formatCount(stats.pendingTasks)}，处理中 ${this.formatCount(stats.processingTasks)}，已完成 ${this.formatCount(stats.completedTasks)}，失败 ${this.formatCount(stats.failedTasks)}）`;
+    const details = `累计处理项数 ${this.formatCount(stats.totalProcessedItems)}，节点累计耗时 ${this.formatSecondsForMessage(stats.totalRunningTime)}；平均每项耗时 ${this.formatSecondsForMessage(stats.averageTimePerItem)}，每100项耗时 ${this.formatSecondsForMessage(stats.averageTimePer100Items)}。`;
+    return `${headline}\n${details}`;
+  }
+
+  private scheduleNextFeishuReport(): number | null {
+    if (this.feishuReportTimer) {
+      clearTimeout(this.feishuReportTimer);
+      this.feishuReportTimer = null;
+    }
+    const webhookUrl = getFeishuWebhookUrl();
+    if (!webhookUrl || this.feishuReportIntervalMs <= 0) {
+      this.feishuNextReportAt = null;
+      return null;
+    }
+
+    const now = Date.now();
+    let delay = this.feishuReportIntervalMs;
+    if (this.feishuLastReportAt) {
+      const elapsed = now - this.feishuLastReportAt;
+      delay = elapsed >= this.feishuReportIntervalMs ? 0 : this.feishuReportIntervalMs - elapsed;
+    }
+
+    delay = Math.max(0, delay);
+    this.feishuNextReportAt = now + delay;
+    this.feishuReportTimer = setTimeout(() => {
+      void this.triggerFeishuReport("scheduled");
+    }, delay);
+    if (typeof this.feishuReportTimer.unref === "function") {
+      this.feishuReportTimer.unref();
+    }
+    return this.feishuNextReportAt;
+  }
+
+  getFeishuReportingState(): FeishuReportingState {
+    const intervalMinutes = Math.round(this.feishuReportIntervalMs / 60000);
+    const webhookConfigured = !!getFeishuWebhookUrl();
+    return {
+      intervalMinutes,
+      intervalMs: this.feishuReportIntervalMs,
+      lastReportAt: this.feishuLastReportAt,
+      nextReportAt: this.feishuNextReportAt,
+      reportingEnabled: webhookConfigured && this.feishuReportIntervalMs > 0,
+      webhookConfigured,
+      inFlight: this.feishuReportInFlight,
+    };
+  }
+
+  applyFeishuConfig(config: ReturnType<typeof getBatchSizeConfig>): void {
+    const intervalMinutes = Math.max(0, config.feishuReportIntervalMinutes ?? 0);
+    this.feishuReportIntervalMs = intervalMinutes * 60 * 1000;
+    this.scheduleNextFeishuReport();
+  }
+
+  async triggerFeishuReport(
+    reason: FeishuReportReason,
+    options: { force?: boolean } = {},
+  ): Promise<
+    | { ok: true; message: string; lastReportAt: number; nextReportAt: number | null; intervalMinutes: number }
+    | { ok: false; reason: string; error?: string; status?: number }
+  > {
+    const webhookUrl = getFeishuWebhookUrl();
+    if (!webhookUrl) {
+      this.scheduleNextFeishuReport();
+      return { ok: false, reason: "NO_WEBHOOK" };
+    }
+
+    if (this.feishuReportInFlight) {
+      return { ok: false, reason: "IN_FLIGHT" };
+    }
+
+    if (!options.force && this.feishuReportIntervalMs <= 0) {
+      return { ok: false, reason: "REPORTING_DISABLED" };
+    }
+
+    this.feishuReportInFlight = true;
+    if (this.feishuReportTimer) {
+      clearTimeout(this.feishuReportTimer);
+      this.feishuReportTimer = null;
+    }
+    this.feishuNextReportAt = null;
+
+    let scheduled = false;
+
+    try {
+      const stats = this.getGlobalCompletionStats();
+      const message = this.buildFeishuReportMessage(stats);
+
+      console.info("[飞书汇报] 准备发送任务状态汇报", { reason });
+
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          msg_type: "text",
+          content: {
+            text: message,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        console.error("[飞书汇报] 发送失败", {
+          reason,
+          status: response.status,
+          errorText,
+        });
+        return { ok: false, reason: "HTTP_ERROR", status: response.status, error: errorText };
+      }
+
+      this.feishuLastReportAt = Date.now();
+      const nextReportAt = this.scheduleNextFeishuReport();
+      scheduled = true;
+
+      console.info("[飞书汇报] 发送成功", {
+        reason,
+        lastReportAt: this.feishuLastReportAt,
+        nextReportAt,
+      });
+
+      return {
+        ok: true,
+        message,
+        lastReportAt: this.feishuLastReportAt,
+        nextReportAt,
+        intervalMinutes: Math.round(this.feishuReportIntervalMs / 60000),
+      };
+    } catch (error) {
+      console.error("[飞书汇报] 发送异常", { reason, error });
+      return {
+        ok: false,
+        reason: "EXCEPTION",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      this.feishuReportInFlight = false;
+      if (!scheduled) {
+        this.scheduleNextFeishuReport();
+      }
+    }
   }
 
   private handleRoundsStateChange() {
@@ -2447,41 +2630,11 @@ class TaskStore {
     }
     this.completionDigest = digest;
 
-    const webhookUrl = getFeishuWebhookUrl();
-    if (!webhookUrl) {
+    if (!getFeishuWebhookUrl()) {
       return;
     }
 
-    void this.sendFeishuCompletionNotification(stats, webhookUrl);
-  }
-
-  private async sendFeishuCompletionNotification(
-    stats: GlobalCompletionStats,
-    webhookUrl: string,
-  ): Promise<void> {
-    if (!webhookUrl) {
-      return;
-    }
-    try {
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          msg_type: "text",
-          content: {
-            text: this.buildFeishuMessage(stats),
-          },
-        }),
-      });
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        console.error("发送飞书通知失败:", response.status, errorText);
-      }
-    } catch (error) {
-      console.error("发送飞书通知异常:", error);
-    }
+    void this.triggerFeishuReport("completion", { force: true });
   }
 
   clearNodeStats(roundId?: string): { cleared: number } {

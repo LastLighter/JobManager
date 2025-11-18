@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getBatchSizeConfig, updateBatchSizeConfig } from "@/lib/batchSizeConfig";
+import { taskStore } from "@/lib/taskStore";
 
 export async function GET() {
   const config = getBatchSizeConfig();
-  console.debug("[任务配置][GET] 返回任务批次配置", config);
-  return NextResponse.json(config);
+  const reportingState = taskStore.getFeishuReportingState();
+  console.debug("[任务配置][GET] 返回任务批次配置", { ...config, reportingState });
+  return NextResponse.json({
+    ...config,
+    feishuLastReportAt: reportingState.lastReportAt,
+    feishuNextReportAt: reportingState.nextReportAt,
+    feishuReportingEnabled: reportingState.reportingEnabled,
+    feishuReportInFlight: reportingState.inFlight,
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -70,6 +78,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body.feishuReportIntervalMinutes !== undefined) {
+      const value = Number(body.feishuReportIntervalMinutes);
+      if (!Number.isFinite(value) || value < 0) {
+        console.warn("[任务配置][POST] 飞书汇报间隔不合法", {
+          feishuReportIntervalMinutes: body.feishuReportIntervalMinutes,
+        });
+        return NextResponse.json(
+          { error: "飞书汇报间隔必须大于等于 0" },
+          { status: 400 },
+        );
+      }
+      updates.feishuReportIntervalMinutes = Math.floor(value);
+    }
+
     if (updates.maxBatchSize !== undefined && updates.defaultBatchSize !== undefined) {
       if (updates.defaultBatchSize > updates.maxBatchSize) {
         console.warn("[任务配置][POST] 默认批次大小超过最大值", {
@@ -84,11 +106,17 @@ export async function POST(request: NextRequest) {
     }
     
     const updatedConfig = updateBatchSizeConfig(updates);
+    taskStore.applyFeishuConfig(updatedConfig);
+    const reportingState = taskStore.getFeishuReportingState();
     
-    console.info("[任务配置][POST] 更新任务配置成功", updatedConfig);
+    console.info("[任务配置][POST] 更新任务配置成功", { updatedConfig, reportingState });
     return NextResponse.json({
       success: true,
       ...updatedConfig,
+      feishuLastReportAt: reportingState.lastReportAt,
+      feishuNextReportAt: reportingState.nextReportAt,
+      feishuReportingEnabled: reportingState.reportingEnabled,
+      feishuReportInFlight: reportingState.inFlight,
     });
   } catch (error) {
     console.error("更新配置失败", error);
