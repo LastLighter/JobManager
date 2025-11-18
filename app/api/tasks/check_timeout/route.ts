@@ -16,17 +16,31 @@ export async function POST(request: NextRequest) {
     if (body && typeof body.roundId === "string" && body.roundId.trim() !== "") {
       roundId = body.roundId.trim();
     }
-  } catch {
-    // Use default timeout
+  } catch (error) {
+    console.warn("[任务超时检查][POST] 解析请求体失败，使用默认超时阈值", error);
   }
 
-  const failedCount = taskStore.failTimedOutTasks(timeoutMs, roundId);
+  try {
+    const failedCount = taskStore.failTimedOutTasks(timeoutMs, roundId);
+    console.info("[任务超时检查][POST] 标记超时任务完成", {
+      timeoutMs,
+      roundId: roundId ?? null,
+      failedCount,
+    });
 
-  return NextResponse.json({
-    success: true,
-    failedCount,
-    timeoutMs,
-    roundId: roundId ?? null,
-  });
+    return NextResponse.json({
+      success: true,
+      failedCount,
+      timeoutMs,
+      roundId: roundId ?? null,
+    });
+  } catch (error) {
+    console.error("[任务超时检查][POST] 标记超时任务失败", {
+      timeoutMs,
+      roundId: roundId ?? null,
+    }, error);
+
+    return NextResponse.json({ error: "标记超时任务失败" }, { status: 500 });
+  }
 }
 

@@ -26,20 +26,43 @@ export async function POST(request: Request) {
     if (nodeIdPayload) {
       requestedNodeId = nodeIdPayload;
     }
-  } catch {
-    // Ignore JSON parse errors; fall back to default batch size.
+  } catch (error) {
+    console.warn("[任务获取][POST] 解析请求体失败，使用默认批次大小与轮次参数", error);
   }
 
   const size = Math.min(requestedBatchSize ?? fallbackBatchSize, safeMaxBatchSize);
-  const tasks = taskStore.getTasksForProcessing(size, requestedRoundId, requestedNodeId);
 
-  return NextResponse.json(
-    tasks.map((task) => ({
-      task_id: task.id,
-      round_id: task.roundId,
-      body: task.path,
-    })),
-  );
+  try {
+    const tasks = taskStore.getTasksForProcessing(size, requestedRoundId, requestedNodeId);
+    console.debug("[任务获取][POST] 分配任务成功", {
+      requestedBatchSize,
+      fallbackBatchSize,
+      safeMaxBatchSize,
+      finalBatchSize: size,
+      roundId: requestedRoundId ?? null,
+      nodeId: requestedNodeId ?? null,
+      deliveredTaskCount: tasks.length,
+    });
+
+    return NextResponse.json(
+      tasks.map((task) => ({
+        task_id: task.id,
+        round_id: task.roundId,
+        body: task.path,
+      })),
+    );
+  } catch (error) {
+    console.error("[任务获取][POST] 获取任务失败", {
+      requestedBatchSize,
+      fallbackBatchSize,
+      safeMaxBatchSize,
+      finalBatchSize: size,
+      roundId: requestedRoundId ?? null,
+      nodeId: requestedNodeId ?? null,
+    }, error);
+
+    return NextResponse.json({ error: "获取任务失败" }, { status: 500 });
+  }
 }
 
 export async function GET(request: Request) {
@@ -49,15 +72,32 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const roundId = url.searchParams.get("roundId") ?? undefined;
   const nodeId = url.searchParams.get("node_id") ?? url.searchParams.get("nodeId") ?? undefined;
-  const tasks = taskStore.getTasksForProcessing(fallbackBatchSize, roundId, nodeId ?? undefined);
 
-  return NextResponse.json(
-    tasks.map((task) => ({
-      task_id: task.id,
-      round_id: task.roundId,
-      body: task.path,
-    })),
-  );
+  try {
+    const tasks = taskStore.getTasksForProcessing(fallbackBatchSize, roundId, nodeId ?? undefined);
+    console.debug("[任务获取][GET] 分配任务成功", {
+      batchSize: fallbackBatchSize,
+      roundId: roundId ?? null,
+      nodeId: nodeId ?? null,
+      deliveredTaskCount: tasks.length,
+    });
+
+    return NextResponse.json(
+      tasks.map((task) => ({
+        task_id: task.id,
+        round_id: task.roundId,
+        body: task.path,
+      })),
+    );
+  } catch (error) {
+    console.error("[任务获取][GET] 获取任务失败", {
+      batchSize: fallbackBatchSize,
+      roundId: roundId ?? null,
+      nodeId: nodeId ?? null,
+    }, error);
+
+    return NextResponse.json({ error: "获取任务失败" }, { status: 500 });
+  }
 }
 
 

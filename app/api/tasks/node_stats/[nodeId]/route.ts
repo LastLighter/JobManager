@@ -11,25 +11,46 @@ export async function DELETE(
   const roundId = request.nextUrl.searchParams.get("roundId") ?? undefined;
 
   if (!nodeId) {
+    console.warn("[节点统计][DELETE] 缺少节点ID参数");
     return NextResponse.json(
       { error: "缺少节点ID" },
       { status: 400 },
     );
   }
 
-  const result = taskStore.deleteNodeStats(nodeId, roundId);
+  try {
+    console.debug("[节点统计][DELETE] 尝试删除节点统计信息", {
+      nodeId,
+      roundId: roundId ?? null,
+    });
+    const result = taskStore.deleteNodeStats(nodeId, roundId);
 
-  if (!result.deleted) {
-    return NextResponse.json(
-      { error: "节点不存在或已被删除" },
-      { status: 404 },
-    );
+    if (!result.deleted) {
+      console.warn("[节点统计][DELETE] 未找到节点或已经删除", {
+        nodeId,
+        roundId: roundId ?? null,
+      });
+      return NextResponse.json(
+        { error: "节点不存在或已被删除" },
+        { status: 404 },
+      );
+    }
+
+    console.info("[节点统计][DELETE] 节点统计信息删除成功", {
+      nodeId,
+      roundId: roundId ?? null,
+    });
+    return NextResponse.json({
+      success: true,
+      nodeId,
+      roundId: roundId ?? null,
+    });
+  } catch (error) {
+    console.error("[节点统计][DELETE] 删除节点统计信息失败", {
+      nodeId,
+      roundId: roundId ?? null,
+    }, error);
+    return NextResponse.json({ error: "删除节点统计信息失败" }, { status: 500 });
   }
-
-  return NextResponse.json({
-    success: true,
-    nodeId,
-    roundId: roundId ?? null,
-  });
 }
 

@@ -4,12 +4,14 @@ import { getBatchSizeConfig, updateBatchSizeConfig } from "@/lib/batchSizeConfig
 
 export async function GET() {
   const config = getBatchSizeConfig();
+  console.debug("[任务配置][GET] 返回任务批次配置", config);
   return NextResponse.json(config);
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.debug("[任务配置][POST] 收到配置更新请求", body);
     const currentConfig = getBatchSizeConfig();
     const updates: Partial<ReturnType<typeof getBatchSizeConfig>> = {};
     
@@ -17,6 +19,7 @@ export async function POST(request: NextRequest) {
     if (body.maxBatchSize !== undefined) {
       const value = Number(body.maxBatchSize);
       if (!Number.isFinite(value) || value < 1) {
+        console.warn("[任务配置][POST] 最大批次大小不合法", { maxBatchSize: body.maxBatchSize });
         return NextResponse.json(
           { error: "最大批次大小必须大于 0" },
           { status: 400 }
@@ -30,6 +33,10 @@ export async function POST(request: NextRequest) {
       const value = Number(body.defaultBatchSize);
       const targetMax = updates.maxBatchSize ?? currentConfig.maxBatchSize;
       if (!Number.isFinite(value) || value < 1 || value > targetMax) {
+        console.warn("[任务配置][POST] 默认批次大小不合法", {
+          defaultBatchSize: body.defaultBatchSize,
+          targetMax,
+        });
         return NextResponse.json(
           { error: `默认批次大小必须在 1 到 ${targetMax} 之间` },
           { status: 400 },
@@ -46,6 +53,7 @@ export async function POST(request: NextRequest) {
         if (trimmed.length === 0) {
           updates.feishuWebhookUrl = null;
         } else if (!/^https:\/\//i.test(trimmed)) {
+          console.warn("[任务配置][POST] 飞书 Webhook 地址格式错误", { feishuWebhookUrl: body.feishuWebhookUrl });
           return NextResponse.json(
             { error: "飞书 Webhook 地址需以 https:// 开头" },
             { status: 400 },
@@ -54,6 +62,7 @@ export async function POST(request: NextRequest) {
           updates.feishuWebhookUrl = trimmed;
         }
       } else {
+        console.warn("[任务配置][POST] 飞书 Webhook 地址类型错误", { feishuWebhookUrl: body.feishuWebhookUrl });
         return NextResponse.json(
           { error: "飞书 Webhook 地址格式不正确" },
           { status: 400 },
@@ -63,6 +72,10 @@ export async function POST(request: NextRequest) {
 
     if (updates.maxBatchSize !== undefined && updates.defaultBatchSize !== undefined) {
       if (updates.defaultBatchSize > updates.maxBatchSize) {
+        console.warn("[任务配置][POST] 默认批次大小超过最大值", {
+          defaultBatchSize: updates.defaultBatchSize,
+          maxBatchSize: updates.maxBatchSize,
+        });
         return NextResponse.json(
           { error: `默认批次大小必须在 1 到 ${updates.maxBatchSize} 之间` },
           { status: 400 }
@@ -72,6 +85,7 @@ export async function POST(request: NextRequest) {
     
     const updatedConfig = updateBatchSizeConfig(updates);
     
+    console.info("[任务配置][POST] 更新任务配置成功", updatedConfig);
     return NextResponse.json({
       success: true,
       ...updatedConfig,

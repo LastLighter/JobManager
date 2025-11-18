@@ -13,7 +13,9 @@ export async function POST(request: Request) {
       item_num: body?.item_num,
       running_time: body?.running_time,
     };
-  } catch {
+    console.debug("[节点统计][POST] 收到节点处理信息", payload);
+  } catch (error) {
+    console.warn("[节点统计][POST] 解析请求体失败", error);
     return NextResponse.json(
       { error: "请求体必须是有效的JSON" },
       {
@@ -23,6 +25,7 @@ export async function POST(request: Request) {
   }
 
   if (!payload || typeof payload.node_id !== "string" || payload.node_id.trim() === "") {
+    console.warn("[节点统计][POST] 缺少节点ID", payload);
     return NextResponse.json(
       { error: "缺少节点ID" },
       {
@@ -32,6 +35,7 @@ export async function POST(request: Request) {
   }
 
   if (typeof payload.item_num !== "number" || payload.item_num < 0) {
+    console.warn("[节点统计][POST] item_num 不合法", payload);
     return NextResponse.json(
       { error: "item_num 必须是非负数字" },
       {
@@ -41,6 +45,7 @@ export async function POST(request: Request) {
   }
 
   if (typeof payload.running_time !== "number" || payload.running_time < 0) {
+    console.warn("[节点统计][POST] running_time 不合法", payload);
     return NextResponse.json(
       { error: "running_time 必须是非负数字" },
       {
@@ -61,6 +66,11 @@ export async function POST(request: Request) {
     );
   }
 
+  console.info("[节点统计][POST] 记录节点处理信息成功", {
+    nodeId: payload.node_id,
+    itemNum: payload.item_num,
+    runningTime: payload.running_time,
+  });
   return NextResponse.json({
     success: true,
     node_id: payload.node_id,

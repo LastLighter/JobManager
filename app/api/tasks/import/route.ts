@@ -11,6 +11,7 @@ function extractPathsFromText(content: string): string[] {
 
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") ?? "";
+  console.debug("[任务导入][POST] 收到导入请求", { contentType });
 
   try {
     if (contentType.includes("multipart/form-data")) {
@@ -25,10 +26,12 @@ export async function POST(request: NextRequest) {
 
       for (const item of blobs) {
         if (!(item instanceof Blob)) {
+          console.warn("[任务导入][POST] 跳过非文件类型条目");
           continue;
         }
         const name = "name" in item && typeof item.name === "string" ? item.name : undefined;
         if (name && !name.toLowerCase().endsWith(".txt")) {
+          console.warn("[任务导入][POST] 跳过非 txt 文件", { fileName: name });
           continue;
         }
 
@@ -46,6 +49,12 @@ export async function POST(request: NextRequest) {
           sourceHint: name,
           activate: createdRounds.length === 0,
         });
+        console.debug("[任务导入][POST] 创建任务轮完成", {
+          fileName: name ?? null,
+          roundId: roundResult.roundId,
+          added: roundResult.added,
+          skipped: roundResult.skipped,
+        });
         totalAdded += roundResult.added;
         totalSkipped += roundResult.skipped;
         createdRounds.push({
@@ -55,12 +64,21 @@ export async function POST(request: NextRequest) {
       }
 
       if (createdRounds.length === 0) {
+        console.warn("[任务导入][POST] 未找到任何可用任务路径", {
+          processedFileCount,
+          totalSkipped,
+        });
         return NextResponse.json(
           { error: processedFileCount === 0 ? "未找到可处理的文本文件" : "未检测到有效的任务路径" },
           { status: 400 },
         );
       }
 
+      console.info("[任务导入][POST] 批量导入任务成功", {
+        createdRoundCount: createdRounds.length,
+        totalAdded,
+        totalSkipped,
+      });
       return NextResponse.json({
         rounds: createdRounds,
         totalAdded,
@@ -71,10 +89,12 @@ export async function POST(request: NextRequest) {
     if (contentType.includes("application/json")) {
       const body = await request.json();
       if (!body || !Array.isArray(body.paths)) {
+        console.warn("[任务导入][POST] JSON 请求缺少 paths 数组", { body });
         return NextResponse.json({ error: "JSON格式应包含paths数组" }, { status: 400 });
       }
       const paths = body.paths.filter((item: unknown) => typeof item === "string") as string[];
       if (paths.length === 0) {
+        console.warn("[任务导入][POST] JSON 请求 paths 为空");
         return NextResponse.json({ error: "未检测到任何路径" }, { status: 400 });
       }
       const roundResult = taskStore.createRoundFromPaths(paths, {
@@ -82,6 +102,11 @@ export async function POST(request: NextRequest) {
         sourceType: "manual",
         sourceHint: "manual-json",
         activate: true,
+      });
+      console.info("[任务导入][POST] JSON 导入任务成功", {
+        roundId: roundResult.roundId,
+        added: roundResult.added,
+        skipped: roundResult.skipped,
       });
       return NextResponse.json({
         rounds: [
@@ -98,12 +123,18 @@ export async function POST(request: NextRequest) {
     const text = await request.text();
     const paths = extractPathsFromText(text);
     if (paths.length === 0) {
+      console.warn("[任务导入][POST] 文本请求未包含有效路径");
       return NextResponse.json({ error: "未检测到任何路径" }, { status: 400 });
     }
     const roundResult = taskStore.createRoundFromPaths(paths, {
       sourceType: "manual",
       sourceHint: "manual-text",
       activate: true,
+    });
+    console.info("[任务导入][POST] 文本导入任务成功", {
+      roundId: roundResult.roundId,
+      added: roundResult.added,
+      skipped: roundResult.skipped,
     });
     return NextResponse.json({
       rounds: [
