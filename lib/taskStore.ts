@@ -1109,9 +1109,11 @@ class SingleRoundStore {
     };
   }
 
-  recordNodeProcessedInfo(info: ProcessedInfo): void {
+  recordNodeProcessedInfo(info: ProcessedInfo, recordNodeStats = true): void {
     const now = Date.now();
-    this.nodeStore.recordProcessedInfo(info, now);
+    if (recordNodeStats) {
+      this.nodeStore.recordProcessedInfo(info, now);
+    }
     this.totalProcessedItemNum += info.item_num;
     this.totalProcessedRunningTime += info.running_time;
     this.lastProcessedAt = now;
@@ -2320,21 +2322,27 @@ class TaskStore {
     return { selectedRound, aggregate };
   }
 
-  recordNodeProcessedInfo(info: ProcessedInfo, roundId?: string) {
-    const entry = this.getEntry(roundId);
+  recordNodeProcessedInfo(info: ProcessedInfo) {
+    this.nodeStore.recordProcessedInfo(info);
+    const entry = this.ensureActiveRound();
     if (!entry) {
-      throw new Error("No active task round available to record node statistics.");
+      return;
     }
-    const keepLoaded = entry.status === "active";
-    this.withRoundStore(
-      entry,
-      (store) => {
-        store.recordNodeProcessedInfo(info);
-        entry.isDirty = true;
-        return null;
-      },
-      { keepLoaded, registerTasks: keepLoaded },
-    );
+
+    const keepLoaded = true;
+    try {
+      this.withRoundStore(
+        entry,
+        (store) => {
+          store.recordNodeProcessedInfo(info, false);
+          entry.isDirty = true;
+          return null;
+        },
+        { keepLoaded, registerTasks: keepLoaded },
+      );
+    } catch (error) {
+      console.error("记录节点统计信息时更新当前任务轮失败:", error);
+    }
   }
 
   getNodeStatsPage(
