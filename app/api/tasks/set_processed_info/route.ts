@@ -56,7 +56,37 @@ export async function POST(request: Request) {
     );
   }
 
-  taskStore.recordNodeProcessedInfo(payload, roundId);
+  if (!roundId) {
+    return NextResponse.json(
+      { error: "缺少 round_id" },
+      {
+        status: 400,
+      },
+    );
+  }
+
+  try {
+    taskStore.recordNodeProcessedInfo(payload, roundId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "No active task round available to record node statistics."
+    ) {
+      return NextResponse.json(
+        { error: "指定的 round_id 没有对应的活动任务轮" },
+        {
+          status: 409,
+        },
+      );
+    }
+    console.error("记录节点统计信息失败:", error);
+    return NextResponse.json(
+      { error: "记录节点统计信息失败" },
+      {
+        status: 500,
+      },
+    );
+  }
 
   return NextResponse.json({
     success: true,

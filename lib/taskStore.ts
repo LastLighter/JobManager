@@ -938,6 +938,7 @@ class SingleRoundStore {
     this.processingSet.delete(taskId);
     this.processingStartedAt.delete(taskId);
     this.pendingSet.delete(taskId);
+    this.removeIdFromList(this.pendingQueue, taskId);
     this.detachTaskFromNode(taskId, previousNodeId);
 
     if (task.status === "completed" && !success) {
@@ -952,7 +953,7 @@ class SingleRoundStore {
       task.failureCount = 0;
       task.processingStartedAt = undefined;
       if (this.failedSet.delete(taskId)) {
-        this.failedList = this.failedList.filter((id) => id !== taskId);
+        this.removeIdFromList(this.failedList, taskId);
       }
 
       if (!this.completedSet.has(taskId)) {
@@ -966,10 +967,11 @@ class SingleRoundStore {
     task.failureCount += 1;
     task.processingStartedAt = undefined;
     task.status = "failed";
+    this.removeIdFromList(this.failedList, taskId);
     if (!this.failedSet.has(taskId)) {
       this.failedSet.add(taskId);
-      this.failedList.unshift(taskId);
     }
+    this.failedList.unshift(taskId);
 
     return { ok: true as const, status: task.status };
   }
@@ -1003,7 +1005,9 @@ class SingleRoundStore {
 
   markTimedOutTasksAsFailed(timeoutMs: number): number {
     const now = Date.now();
-    let failedCount = 0;
+    const safeTimeout =
+      Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0;
+    let handledCount = 0;
 
     for (const taskId of [...this.processingSet]) {
       const task = this.tasks.get(taskId);
@@ -1013,28 +1017,43 @@ class SingleRoundStore {
         continue;
       }
 
-      if (now - startedAt > timeoutMs) {
-        this.processingSet.delete(taskId);
-        this.processingStartedAt.delete(taskId);
-        this.pendingSet.delete(taskId);
-        this.detachTaskFromNode(taskId);
+      if (safeTimeout > 0 && now - startedAt <= safeTimeout) {
+        continue;
+      }
 
-        task.status = "failed";
-        task.processingStartedAt = undefined;
-        task.updatedAt = now;
+      const previousNodeId = task.processingNodeId;
+      this.processingSet.delete(taskId);
+      this.processingStartedAt.delete(taskId);
+      this.pendingSet.delete(taskId);
+      this.removeIdFromList(this.pendingQueue, taskId);
+      this.detachTaskFromNode(taskId, previousNodeId);
+
+      task.processingStartedAt = undefined;
+      task.updatedAt = now;
+
+      if (task.failureCount < 1) {
+        const retryCount = task.failureCount + 1;
+        task.failureCount = retryCount;
+        task.status = "pending";
+        task.message = `任务超时，已重新排入队列进行第${retryCount}次重试`;
+        this.failedSet.delete(taskId);
+        this.removeIdFromList(this.failedList, taskId);
+        this.enqueuePending(taskId);
+      } else {
         task.failureCount += 1;
-        if (!task.message || task.message.length === 0) {
-          task.message = "任务超时失败";
-        }
+        task.status = "failed";
+        task.message = "任务超时失败（已达到最大重试次数）";
         if (!this.failedSet.has(taskId)) {
           this.failedSet.add(taskId);
-          this.failedList.unshift(taskId);
         }
-        failedCount += 1;
+        this.removeIdFromList(this.failedList, taskId);
+        this.failedList.unshift(taskId);
       }
+
+      handledCount += 1;
     }
 
-    return failedCount;
+    return handledCount;
   }
 
   inspectProcessingTasks(timeoutMs: number): TimeoutInspectionSummary {
@@ -1306,6 +1325,14 @@ class SingleRoundStore {
       this.nodeStore.detachTask(taskId, nodeId);
     } else {
       this.nodeStore.detachTask(taskId);
+    }
+  }
+
+  private removeIdFromList(list: string[], id: string) {
+    let index = list.indexOf(id);
+    while (index !== -1) {
+      list.splice(index, 1);
+      index = list.indexOf(id, index);
     }
   }
 
