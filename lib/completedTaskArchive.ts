@@ -12,17 +12,6 @@ function ensureDataDir() {
   }
 }
 
-function toJsonPath(filePath: string): string {
-  if (!filePath) {
-    return "";
-  }
-  const parsed = path.parse(filePath);
-  if (!parsed.ext) {
-    return `${filePath}.json`;
-  }
-  return path.join(parsed.dir, `${parsed.name}.json`);
-}
-
 function sanitizeValue(value: string): string {
   if (!value) {
     return "";
@@ -41,19 +30,18 @@ class CompletedTaskArchive {
     this.installExitHooks();
   }
 
-  record(taskId: string, taskPath: string) {
-    if (typeof taskId !== "string" || taskId.trim() === "") {
-      return;
-    }
+  record(taskPath: string, itemCount: number) {
     if (typeof taskPath !== "string" || taskPath.trim() === "") {
       return;
     }
 
-    const normalizedId = sanitizeValue(taskId);
     const normalizedPath = sanitizeValue(taskPath);
-    const jsonPath = sanitizeValue(toJsonPath(normalizedPath));
+    const normalizedCount =
+      typeof itemCount === "number" && Number.isFinite(itemCount) && itemCount >= 0
+        ? Math.floor(itemCount)
+        : 0;
 
-    const line = `${normalizedId}/${normalizedPath}/${jsonPath}`;
+    const line = JSON.stringify([normalizedPath, normalizedCount]);
     this.buffer.push(line);
 
     if (this.buffer.length >= this.flushThreshold) {

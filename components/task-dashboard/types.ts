@@ -148,6 +148,14 @@ export interface NodePerformanceRecordItem {
   speed: number;
 }
 
+export type NodeHealthStatus = "healthy" | "subHealthy" | "unhealthy";
+
+export interface NodeHealthStats {
+  healthy: number;
+  subHealthy: number;
+  unhealthy: number;
+}
+
 export interface NodeStatsItem {
   nodeId: string;
   totalItemNum: number;
@@ -160,6 +168,7 @@ export interface NodeStatsItem {
   requestCount: number;
   assignedTaskCount: number;
   activeTaskCount: number;
+  healthStatus: NodeHealthStatus;
 }
 
 export interface NodeStatsPagination {
@@ -180,6 +189,7 @@ export interface NodeStatsSummary {
   totalRequests: number;
   totalAssignedTasks: number;
   totalActiveTasks: number;
+  healthStats: NodeHealthStats;
 }
 
 export interface AggregatedPerformanceRecord {

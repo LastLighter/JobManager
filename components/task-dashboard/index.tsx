@@ -4,12 +4,14 @@ import type { ChangeEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  NODE_HEALTH_BADGES,
+  NODE_HEALTH_LABELS,
+  NODE_PAGE_SIZE_OPTIONS,
   ROUND_PAGE_SIZE_OPTIONS,
   ROUND_STATUS_BADGES,
   ROUND_STATUS_LABELS,
   STATUS_OPTIONS,
   TASK_PAGE_SIZE_OPTIONS,
-  NODE_PAGE_SIZE_OPTIONS,
   statusBadgeStyles,
 } from "./constants";
 import { CompletionSummary } from "./completion-summary";
@@ -17,6 +19,7 @@ import { NodeDetailModal } from "./node-detail-modal";
 import { SpeedSparkline } from "./charts";
 import { TimeoutMetricsSection } from "./timeout-metrics";
 import type {
+  NodeHealthStats,
   NodeStatsItem,
   NodeStatsSummary,
   RoundStatsSummary,
@@ -34,6 +37,7 @@ export function TaskDashboard() {
   const [pageSize, setPageSize] = useState(20);
   const [roundPage, setRoundPage] = useState(1);
   const [roundPageSize, setRoundPageSize] = useState(10);
+  const [roundPageInput, setRoundPageInput] = useState("1");
 
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,6 +67,12 @@ export function TaskDashboard() {
   const [nodeStatsPageSize, setNodeStatsPageSize] = useState(10);
   const [nodeStatsTotal, setNodeStatsTotal] = useState(0);
   const [nodeStatsTotalPages, setNodeStatsTotalPages] = useState(1);
+  const [nodeStatsPageInput, setNodeStatsPageInput] = useState("1");
+  const [nodeHealthStats, setNodeHealthStats] = useState<NodeHealthStats>({
+    healthy: 0,
+    subHealthy: 0,
+    unhealthy: 0,
+  });
 
   // Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -199,6 +209,11 @@ export function TaskDashboard() {
       const data = await response.json();
       const nodes = Array.isArray(data.nodes) ? (data.nodes as NodeStatsItem[]) : [];
       setNodeStats(nodes);
+      const healthStats =
+        data.healthStats && typeof data.healthStats === "object"
+          ? (data.healthStats as NodeHealthStats)
+          : { healthy: 0, subHealthy: 0, unhealthy: 0 };
+      setNodeHealthStats(healthStats);
       setNodeStatsSummary(
         data.summary && typeof data.summary === "object" ? (data.summary as NodeStatsSummary) : null,
       );
@@ -254,6 +269,7 @@ export function TaskDashboard() {
 
   const currentTasks = summary?.tasks ?? [];
   const nodeCount = nodeStatsSummary?.nodeCount ?? nodeStatsTotal ?? nodeStats.length;
+  const nodeHealthOrder: Array<keyof NodeHealthStats> = ["healthy", "subHealthy", "unhealthy"];
   const roundNameById = useMemo(() => {
     const map = new Map<string, string>();
     rounds.forEach((round) => {
@@ -352,6 +368,14 @@ export function TaskDashboard() {
   }, [selectedRoundId]);
 
   useEffect(() => {
+    setRoundPageInput(String(roundPage));
+  }, [roundPage]);
+
+  useEffect(() => {
+    setNodeStatsPageInput(String(nodeStatsPage));
+  }, [nodeStatsPage]);
+
+  useEffect(() => {
     if (summary?.runStats?.allCompleted) {
       setShowCompletionSummary(true);
     } else {
@@ -418,6 +442,17 @@ export function TaskDashboard() {
       setRoundPage((prev) => Math.min(prev + 1, maxPage));
     }
   };
+
+  const handleRoundPageJump = useCallback(() => {
+    const maxPage = Math.max(1, summary?.roundPagination?.totalPages ?? 1);
+    const parsed = Number.parseInt(roundPageInput, 10);
+    if (Number.isFinite(parsed)) {
+      const target = Math.min(Math.max(parsed, 1), maxPage);
+      setRoundPage(target);
+    } else {
+      setRoundPageInput(String(roundPage));
+    }
+  }, [roundPageInput, roundPage, summary?.roundPagination?.totalPages]);
 
   const handleRoundPageSizeChange = (size: number) => {
     setRoundPageSize(size);
@@ -705,6 +740,16 @@ export function TaskDashboard() {
       setDeletingNodeId(null);
     }
   };
+
+  const handleNodeStatsPageJump = useCallback(() => {
+    const parsed = Number.parseInt(nodeStatsPageInput, 10);
+    if (!Number.isFinite(parsed)) {
+      setNodeStatsPageInput(String(nodeStatsPage));
+      return;
+    }
+    const target = Math.min(Math.max(parsed, 1), Math.max(1, nodeStatsTotalPages));
+    setNodeStatsPage(target);
+  }, [nodeStatsPageInput, nodeStatsPage, nodeStatsTotalPages]);
 
   const handleViewNodeDetails = (node: NodeStatsItem) => {
     setSelectedNode(node);
@@ -1105,6 +1150,28 @@ export function TaskDashboard() {
                             ))}
                           </select>
                         </label>
+                        <div className="flex items-center gap-1">
+                          <span>跳转到</span>
+                          <input
+                            type="number"
+                            min={1}
+                            className="w-16 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600"
+                            value={roundPageInput}
+                            onChange={(event) => setRoundPageInput(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                handleRoundPageJump();
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 transition hover:bg-slate-100"
+                            onClick={handleRoundPageJump}
+                          >
+                            跳转
+                          </button>
+                        </div>
                         <button
                           type="button"
                           className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1367,6 +1434,20 @@ export function TaskDashboard() {
                     />
                   </div>
                 )}
+                <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  <span className="font-medium text-slate-700">节点健康：</span>
+                  {nodeHealthOrder.map((key) => (
+                    <span
+                      key={key}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium ${NODE_HEALTH_BADGES[key]}`}
+                    >
+                      {NODE_HEALTH_LABELS[key]} {formatNumber(nodeHealthStats[key])}
+                    </span>
+                  ))}
+                  <span className="text-[11px] text-slate-400">
+                    连续 5 分钟无回传判定为亚健康，超过 15 分钟自动清除。
+                  </span>
+                </div>
 
                 {nodeStatsError && (
                   <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{nodeStatsError}</div>
@@ -1389,6 +1470,7 @@ export function TaskDashboard() {
                             <th className="px-4 py-3">总运行时间 (秒)</th>
                             <th className="px-4 py-3">每100项平均耗时 (秒)</th>
                             <th className="px-4 py-3">平均速度 (项/秒)</th>
+                            <th className="px-4 py-3">健康状态</th>
                             <th className="px-4 py-3">最近速度 (项/秒)</th>
                             <th className="px-4 py-3">速度趋势</th>
                             <th className="px-4 py-3">最后更新</th>
@@ -1408,6 +1490,15 @@ export function TaskDashboard() {
                                 <td className="px-4 py-3">{node.totalRunningTime.toFixed(2)}</td>
                                 <td className="px-4 py-3">{formatSeconds(node.avgTimePer100Items)}</td>
                                 <td className="px-4 py-3">{node.avgSpeed.toFixed(4)}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-col gap-1">
+                                    <span
+                                      className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-medium ${NODE_HEALTH_BADGES[node.healthStatus]}`}
+                                    >
+                                      {NODE_HEALTH_LABELS[node.healthStatus]}
+                                    </span>
+                                  </div>
+                                </td>
                                 <td className="px-4 py-3">{latestSpeed !== null ? latestSpeed.toFixed(4) : "-"}</td>
                                 <td className="px-4 py-3">
                                   <SpeedSparkline records={node.recentRecords} />
@@ -1462,6 +1553,29 @@ export function TaskDashboard() {
                                 ))}
                               </select>
                             </label>
+                            <div className="flex items-center gap-1">
+                              <span>跳转到</span>
+                              <input
+                                type="number"
+                                min={1}
+                                className="w-16 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600"
+                                value={nodeStatsPageInput}
+                                onChange={(event) => setNodeStatsPageInput(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    handleNodeStatsPageJump();
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={handleNodeStatsPageJump}
+                                disabled={nodeStatsLoading}
+                              >
+                                跳转
+                              </button>
+                            </div>
                             <button
                               type="button"
                               className="rounded border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"

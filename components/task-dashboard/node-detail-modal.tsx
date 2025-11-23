@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 
 import { DetailedSpeedChart } from "./charts";
+import { NODE_HEALTH_BADGES, NODE_HEALTH_LABELS } from "./constants";
 import type { AggregatedPerformanceRecord, NodeStatsItem } from "./types";
 import { CompletionMetricTile } from "./ui";
 import { formatDate, formatNumber, formatSeconds, formatSpeed, groupRecordsForTrend } from "./utils";
@@ -66,6 +67,14 @@ export function NodeDetailModal({ node, onClose }: { node: NodeStatsItem; onClos
             </p>
             <p className="text-xs text-slate-400">
               趋势图基于每 6 条记录取平均值，以减少瞬时波动。
+            </p>
+            <p className="text-xs text-slate-500">
+              健康状态：
+              <span
+                className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${NODE_HEALTH_BADGES[node.healthStatus]}`}
+              >
+                {NODE_HEALTH_LABELS[node.healthStatus]}
+              </span>
             </p>
           </div>
           <button

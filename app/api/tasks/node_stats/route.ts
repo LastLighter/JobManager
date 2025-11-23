@@ -10,7 +10,12 @@ export async function GET(request: NextRequest) {
   const pageSize = Number.isFinite(pageSizeParam) && pageSizeParam > 0 ? Math.min(pageSizeParam, 200) : 10;
 
   try {
-    const { nodes, total, page: effectivePage } = taskStore.getNodeStatsPage(page, pageSize, roundId);
+    const {
+      nodes,
+      total,
+      page: effectivePage,
+      healthStats,
+    } = taskStore.getNodeStatsPage(page, pageSize, roundId);
     const summary = taskStore.getNodeStatsSummary(roundId);
     const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
 
@@ -46,12 +51,18 @@ export async function GET(request: NextRequest) {
         totalRequests: 0,
         totalAssignedTasks: 0,
         totalActiveTasks: 0,
+        healthStats: {
+          healthy: 0,
+          subHealthy: 0,
+          unhealthy: 0,
+        },
       },
       roundId: roundId ?? null,
       page: effectivePage,
       pageSize,
       total,
       totalPages,
+      healthStats,
     });
   } catch (error) {
     console.error("[节点统计][GET] 获取节点统计失败", {

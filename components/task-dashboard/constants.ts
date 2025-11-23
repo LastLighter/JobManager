@@ -1,4 +1,4 @@
-import type { TaskRoundLifecycle, TaskStatus } from "./types";
+import type { NodeHealthStatus, TaskRoundLifecycle, TaskStatus } from "./types";
 
 export const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
   { value: "pending", label: "未处理" },
@@ -30,5 +30,17 @@ export const statusBadgeStyles: Record<TaskStatus, string> = {
   completed: "bg-emerald-100 text-emerald-600",
   failed: "bg-rose-100 text-rose-600",
   all: "bg-slate-200 text-slate-600",
+};
+
+export const NODE_HEALTH_LABELS: Record<NodeHealthStatus, string> = {
+  healthy: "健康",
+  subHealthy: "亚健康",
+  unhealthy: "非健康",
+};
+
+export const NODE_HEALTH_BADGES: Record<NodeHealthStatus, string> = {
+  healthy: "bg-emerald-100 text-emerald-700 border border-emerald-200",
+  subHealthy: "bg-amber-100 text-amber-700 border border-amber-200",
+  unhealthy: "bg-rose-100 text-rose-700 border border-rose-200",
 };
 

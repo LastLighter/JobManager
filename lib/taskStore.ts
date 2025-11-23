@@ -29,6 +29,7 @@ export interface TaskRecord {
   processingStartedAt?: number;
   processingNodeId?: string;
   archivedAt?: number;
+  completedItemNum?: number;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -139,6 +140,8 @@ export interface NodePerformanceRecord {
   speed: number;
 }
 
+export type NodeHealthStatus = "healthy" | "subHealthy" | "unhealthy";
+
 export interface NodeStats {
   nodeId: string;
   totalItemNum: number;
@@ -154,6 +157,8 @@ export interface NodeStats {
   requestCount: number;
   assignedTaskCount: number;
   activeTaskIds: string[];
+  healthStatus: NodeHealthStatus;
+  unhealthySince: number | null;
 }
 
 export interface NodeStatsSummary {
@@ -167,6 +172,16 @@ export interface NodeStatsSummary {
   totalRequests: number;
   totalAssignedTasks: number;
   totalActiveTasks: number;
+  healthStats: NodeHealthSummary;
+}
+
+export type NodeHealthSummary = Record<NodeHealthStatus, number>;
+
+export interface NodeStatsPage {
+  nodes: NodeStats[];
+  total: number;
+  page: number;
+  healthStats: NodeHealthSummary;
 }
 
 class NodeStatisticsStore {
@@ -175,6 +190,9 @@ class NodeStatisticsStore {
   private taskToNode = new Map<string, string>();
   private static readonly MAX_RECENT_NODE_HISTORY = 500;
   private static readonly NODE_RECENT_WINDOW_MS = 2 * 60 * 60 * 1000;
+  private static readonly SUB_HEALTHY_THRESHOLD_MS = 5 * 60 * 1000;
+  private static readonly UNHEALTHY_THRESHOLD_MS = 15 * 60 * 1000;
+  private static readonly UNHEALTHY_PURGE_GRACE_MS = 30 * 1000;
 
   constructor() {
     // 节点统计仅保存在内存中，无需加载持久化文件
@@ -186,6 +204,7 @@ class NodeStatisticsStore {
       return;
     }
     const now = Date.now();
+    this.pruneInactiveNodes(now);
     const stats = this.getOrCreateNodeStats(normalized, now);
     stats.requestCount += 1;
     stats.lastUpdated = now;
@@ -198,6 +217,7 @@ class NodeStatisticsStore {
       return;
     }
     const now = Date.now();
+    this.pruneInactiveNodes(now);
     const stats = this.getOrCreateNodeStats(normalized, now);
     stats.assignedTaskCount += taskIds.length;
     const activeSet = this.ensureActiveSet(normalized);
@@ -208,6 +228,19 @@ class NodeStatisticsStore {
       activeSet.add(taskId);
       this.taskToNode.set(taskId, normalized);
     }
+    stats.lastUpdated = now;
+    this.updateActiveSnapshot(normalized);
+    this.persist();
+  }
+
+  recordHeartbeat(nodeId: string) {
+    const normalized = typeof nodeId === "string" ? nodeId.trim() : "";
+    if (!normalized) {
+      return;
+    }
+    const now = Date.now();
+    this.pruneInactiveNodes(now);
+    const stats = this.getOrCreateNodeStats(normalized, now);
     stats.lastUpdated = now;
     this.updateActiveSnapshot(normalized);
     this.persist();
@@ -248,6 +281,7 @@ class NodeStatisticsStore {
       return;
     }
     this.archiveOutdated(referenceTime);
+    this.pruneInactiveNodes(referenceTime);
     const speed =
       info.running_time > 0 ? info.item_num / info.running_time : 0;
     const record: NodePerformanceRecord = {
@@ -268,46 +302,49 @@ class NodeStatisticsStore {
     this.persist();
   }
 
-  listNodeStats(
-    page: number,
-    pageSize: number,
-  ): { nodes: NodeStats[]; total: number; page: number } {
+  listNodeStats(page: number, pageSize: number): NodeStatsPage {
     const normalizedPage = Math.max(1, Math.floor(page));
     const normalizedPageSize = Math.max(1, Math.floor(pageSize));
 
-    this.archiveOutdated(Date.now());
+    const now = Date.now();
+    this.archiveOutdated(now);
+    const { snapshots, healthStats } = this.collectNodeSnapshots(now);
 
-    const allNodes = [...this.nodeStats.entries()]
-      .map(([nodeId, node]) => {
-        const activeSet = this.nodeActiveTasks.get(nodeId);
-        return {
-          ...node,
-          activeTaskIds: activeSet ? [...activeSet] : [...node.activeTaskIds],
-          recentRecords: [...node.recentRecords],
-        };
-      })
-      .sort((a, b) => b.lastUpdated - a.lastUpdated);
-
-    const total = allNodes.length;
+    const total = snapshots.length;
     const totalPages = Math.max(1, Math.ceil(total / normalizedPageSize));
     const effectivePage = Math.min(normalizedPage, totalPages);
     const start = Math.max(0, (effectivePage - 1) * normalizedPageSize);
     const end = Math.min(start + normalizedPageSize, total);
 
+    const nodes = snapshots.slice(start, end);
+    this.pruneInactiveNodes(now);
+
     return {
+      nodes,
       total,
       page: effectivePage,
-      nodes: allNodes.slice(start, end),
+      healthStats,
     };
   }
 
   getSummarySnapshot(): NodeStatsSummary | null {
-    this.archiveOutdated(Date.now());
+    const now = Date.now();
+    this.archiveOutdated(now);
     if (this.nodeStats.size === 0) {
       return null;
     }
 
     const stats = [...this.nodeStats.values()];
+    const healthStats: NodeHealthSummary = {
+      healthy: 0,
+      subHealthy: 0,
+      unhealthy: 0,
+    };
+    for (const node of stats) {
+      const status = this.computeHealthStatus(node, now);
+      healthStats[status] += 1;
+    }
+    this.pruneInactiveNodes(now);
     const nodeCount = stats.length;
     const totalItemNum = stats.reduce((sum, node) => sum + node.totalItemNum, 0);
     const totalRunningTime = stats.reduce(
@@ -350,6 +387,7 @@ class NodeStatisticsStore {
       totalRequests,
       totalAssignedTasks,
       totalActiveTasks,
+      healthStats,
     };
   }
 
@@ -417,6 +455,8 @@ class NodeStatisticsStore {
       requestCount: 0,
       assignedTaskCount: 0,
       activeTaskIds: [],
+      healthStatus: "healthy",
+      unhealthySince: null,
     };
     this.nodeStats.set(nodeId, initial);
     return initial;
@@ -444,6 +484,71 @@ class NodeStatisticsStore {
       this.trimAndArchiveNodeRecords(stats, referenceTime);
       this.updateNodeAggregates(stats);
       this.updateActiveSnapshot(stats.nodeId);
+    }
+  }
+
+  private collectNodeSnapshots(
+    referenceTime: number,
+  ): { snapshots: NodeStats[]; healthStats: NodeHealthSummary } {
+    const counts: NodeHealthSummary = {
+      healthy: 0,
+      subHealthy: 0,
+      unhealthy: 0,
+    };
+
+    const snapshots = [...this.nodeStats.entries()]
+      .map(([nodeId, node]) => {
+        const status = this.computeHealthStatus(node, referenceTime);
+        counts[status] += 1;
+        const activeSet = this.nodeActiveTasks.get(nodeId);
+        return {
+          ...node,
+          healthStatus: status,
+          activeTaskIds: activeSet ? [...activeSet] : [...node.activeTaskIds],
+          recentRecords: [...node.recentRecords],
+        };
+      })
+      .sort((a, b) => b.lastUpdated - a.lastUpdated);
+
+    return { snapshots, healthStats: counts };
+  }
+
+  private computeHealthStatus(stats: NodeStats, referenceTime: number): NodeHealthStatus {
+    const silenceDuration = referenceTime - stats.lastUpdated;
+    if (silenceDuration >= NodeStatisticsStore.UNHEALTHY_THRESHOLD_MS) {
+      stats.unhealthySince = stats.unhealthySince ?? referenceTime;
+      stats.healthStatus = "unhealthy";
+      return "unhealthy";
+    }
+    stats.unhealthySince = null;
+    if (silenceDuration >= NodeStatisticsStore.SUB_HEALTHY_THRESHOLD_MS) {
+      stats.healthStatus = "subHealthy";
+      return "subHealthy";
+    }
+    stats.healthStatus = "healthy";
+    return "healthy";
+  }
+
+  private pruneInactiveNodes(referenceTime: number) {
+    for (const [nodeId, stats] of [...this.nodeStats.entries()]) {
+      const silenceDuration = referenceTime - stats.lastUpdated;
+      if (silenceDuration < NodeStatisticsStore.UNHEALTHY_THRESHOLD_MS) {
+        continue;
+      }
+      if (stats.unhealthySince === null) {
+        stats.unhealthySince = referenceTime;
+        continue;
+      }
+      if (referenceTime - stats.unhealthySince < NodeStatisticsStore.UNHEALTHY_PURGE_GRACE_MS) {
+        continue;
+      }
+      this.nodeStats.delete(nodeId);
+      this.nodeActiveTasks.delete(nodeId);
+      for (const [taskId, mappedNodeId] of [...this.taskToNode.entries()]) {
+        if (mappedNodeId === nodeId) {
+          this.taskToNode.delete(taskId);
+        }
+      }
     }
   }
 
@@ -757,7 +862,7 @@ class SingleRoundStore {
     return results;
   }
 
-  updateTaskStatus(taskId: string, success: boolean, message: string) {
+  updateTaskStatus(taskId: string, success: boolean, message: string, itemNum?: number) {
     const task = this.tasks.get(taskId);
 
     if (!task) {
@@ -783,6 +888,9 @@ class SingleRoundStore {
       task.status = "completed";
       task.failureCount = 0;
       task.processingStartedAt = undefined;
+      const normalizedItemNum =
+        typeof itemNum === "number" && Number.isFinite(itemNum) && itemNum >= 0 ? itemNum : 0;
+      task.completedItemNum = normalizedItemNum;
       if (this.failedSet.delete(taskId)) {
         this.removeIdFromList(this.failedList, taskId);
       }
@@ -794,7 +902,7 @@ class SingleRoundStore {
       }
 
       if (!task.archivedAt) {
-        completedTaskArchive.record(task.id, task.path);
+        completedTaskArchive.record(task.path, task.completedItemNum ?? 0);
         task.archivedAt = Date.now();
       }
 
@@ -980,7 +1088,7 @@ class SingleRoundStore {
 
     for (const task of this.tasks.values()) {
       if (task.status === "completed" && !task.archivedAt) {
-        completedTaskArchive.record(task.id, task.path);
+        completedTaskArchive.record(task.path, task.completedItemNum ?? 0);
         task.archivedAt = Date.now();
       }
     }
@@ -2147,6 +2255,7 @@ class TaskStore {
     taskId: string,
     success: boolean,
     message: string,
+    itemNum?: number,
   ): { ok: true; status: TaskStatus } | { ok: false; reason: "TASK_NOT_FOUND" } {
     const roundId = this.taskIdToRoundId.get(taskId);
     if (!roundId) {
@@ -2161,7 +2270,7 @@ class TaskStore {
       const result = this.withRoundStore(
         entry,
         (store) => {
-          const outcome = store.updateTaskStatus(taskId, success, message);
+          const outcome = store.updateTaskStatus(taskId, success, message, itemNum);
           if (outcome.ok) {
             entry.isDirty = true;
           } else if (outcome.reason === "TASK_NOT_FOUND") {
@@ -2336,13 +2445,26 @@ class TaskStore {
     }
   }
 
+  recordNodeHeartbeat(nodeId: string) {
+    this.nodeStore.recordHeartbeat(nodeId);
+  }
+
   getNodeStatsPage(
     page: number,
     pageSize: number,
     roundId?: string,
-  ): { nodes: NodeStats[]; total: number; page: number } {
+  ): NodeStatsPage {
     if (roundId && !this.rounds.has(roundId)) {
-      return { nodes: [], total: 0, page: 1 };
+      return {
+        nodes: [],
+        total: 0,
+        page: 1,
+        healthStats: {
+          healthy: 0,
+          subHealthy: 0,
+          unhealthy: 0,
+        },
+      };
     }
     return this.nodeStore.listNodeStats(page, pageSize);
   }

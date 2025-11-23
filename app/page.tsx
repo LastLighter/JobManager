@@ -13,16 +13,30 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
+useEffect(() => {
+  let active = true;
+  const schedule =
+    typeof queueMicrotask === "function"
+      ? queueMicrotask
+      : (fn: () => void) => Promise.resolve().then(fn);
+
+  schedule(() => {
+    if (!active) {
       return;
     }
-    const stored = window.sessionStorage.getItem(STORAGE_KEY);
-    if (stored === "true") {
-      setAuthenticated(true);
+    if (typeof window !== "undefined") {
+      const stored = window.sessionStorage.getItem(STORAGE_KEY);
+      if (stored === "true") {
+        setAuthenticated(true);
+      }
     }
     setChecking(false);
-  }, []);
+  });
+
+  return () => {
+    active = false;
+  };
+}, []);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
