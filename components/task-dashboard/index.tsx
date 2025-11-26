@@ -611,13 +611,7 @@ export function TaskDashboard() {
     setError(null);
 
     try {
-      const params = new URLSearchParams();
-      if (selectedRoundId && selectedRoundId !== "") {
-        params.set("roundId", selectedRoundId);
-      }
-      const query = params.toString();
-      const endpoint = query ? `/api/tasks/failed_list?${query}` : "/api/tasks/failed_list";
-      const response = await fetch(endpoint, { cache: "no-store" });
+      const response = await fetch("/api/tasks/failed_list", { cache: "no-store" });
       if (!response.ok) {
         throw new Error(await response.text());
       }
@@ -652,7 +646,7 @@ export function TaskDashboard() {
     } finally {
       setIsDownloadingFailedList(false);
     }
-  }, [failedTaskCount, isDownloadingFailedList, selectedRoundId]);
+  }, [failedTaskCount, isDownloadingFailedList]);
 
   const handleClearTasks = useCallback(
     async (scope: "selected" | "all") => {
@@ -1004,6 +998,17 @@ export function TaskDashboard() {
                     <h2 className="text-lg font-semibold text-slate-900">任务轮管理</h2>
                     <p className="text-xs text-slate-500">{activeRoundDisplayName ? `进行中：${activeRoundDisplayName}` : "暂无运行中的任务轮"}</p>
                     <p className="text-xs text-slate-400">当前查看：{selectedRoundDisplayName}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={handleDownloadFailedList}
+                        disabled={isDownloadingFailedList || failedTaskCount === 0}
+                        title={failedTaskCount === 0 ? "当前没有失败任务" : undefined}
+                      >
+                        {isDownloadingFailedList ? "生成失败列表..." : "下载全部失败文件列表"}
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-xs text-slate-500 sm:grid-cols-4">
                     <RoundStatTile label="任务轮总数" value={roundStats?.totalRounds ?? 0} />
@@ -1885,15 +1890,6 @@ export function TaskDashboard() {
                     disabled={loading}
                   >
                     {loading ? "刷新中..." : "刷新"}
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={handleDownloadFailedList}
-                    disabled={isDownloadingFailedList || failedTaskCount === 0}
-                    title={failedTaskCount === 0 ? "当前没有失败任务" : undefined}
-                  >
-                    {isDownloadingFailedList ? "生成文件..." : "下载失败列表"}
                   </button>
                 </div>
               </div>
