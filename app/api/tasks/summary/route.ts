@@ -104,16 +104,6 @@ export async function GET(request: NextRequest) {
     const timeoutInspection = taskStore.inspectProcessingTasks(timeoutMs, selectedRoundId ?? undefined);
     const globalCompletion = taskStore.getGlobalCompletionStats();
 
-    console.debug("[任务概况][GET] 生成任务概况数据", {
-      status,
-      page: targetPage,
-      pageSize,
-      total: paginated.total,
-      roundId: selectedRoundId ?? null,
-      totalRounds,
-      timeoutMs,
-    });
-
     return NextResponse.json({
       status,
       page: targetPage,

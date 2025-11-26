@@ -29,14 +29,6 @@ export async function POST(request: Request) {
     if (typeof payload.status !== "boolean" && typeof payload.stautus === "boolean") {
       payload.status = payload.stautus;
     }
-    console.debug("[任务状态][POST] 收到任务状态上报", {
-      taskId: payload?.task_id ?? null,
-      status: payload?.status ?? null,
-      nodeId: payload?.node_id ?? null,
-      roundId: payload?.round_id ?? null,
-      itemNum: payload?.item_num ?? null,
-      hasMessage: typeof payload?.message === "string" && payload.message.length > 0,
-    });
   } catch (error) {
     console.warn("[任务状态][POST] 解析请求体失败", error);
     return NextResponse.json(
@@ -100,13 +92,6 @@ export async function POST(request: Request) {
     }
 
     const taskInfo = taskStore.findTaskByIdOrPath(normalizedTaskId);
-    console.info("[任务状态][POST] 更新任务状态成功", {
-      taskId: normalizedTaskId,
-      status: result.status,
-      roundId: taskInfo?.roundId ?? null,
-      nodeId: normalizedNodeId,
-      itemNum: normalizedItemNum,
-    });
 
     return NextResponse.json({
       task_id: normalizedTaskId,

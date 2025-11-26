@@ -6,7 +6,6 @@ import { taskStore } from "@/lib/taskStore";
 export async function GET() {
   const config = getBatchSizeConfig();
   const reportingState = taskStore.getFeishuReportingState();
-  console.debug("[任务配置][GET] 返回任务批次配置", { ...config, reportingState });
   return NextResponse.json({
     ...config,
     feishuLastReportAt: reportingState.lastReportAt,
@@ -19,7 +18,6 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    console.debug("[任务配置][POST] 收到配置更新请求", body);
     const currentConfig = getBatchSizeConfig();
     const updates: Partial<ReturnType<typeof getBatchSizeConfig>> = {};
     
@@ -109,7 +107,6 @@ export async function POST(request: NextRequest) {
     taskStore.applyFeishuConfig(updatedConfig);
     const reportingState = taskStore.getFeishuReportingState();
     
-    console.info("[任务配置][POST] 更新任务配置成功", { updatedConfig, reportingState });
     return NextResponse.json({
       success: true,
       ...updatedConfig,

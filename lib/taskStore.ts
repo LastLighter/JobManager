@@ -190,8 +190,8 @@ class NodeStatisticsStore {
   private taskToNode = new Map<string, string>();
   private static readonly MAX_RECENT_NODE_HISTORY = 500;
   private static readonly NODE_RECENT_WINDOW_MS = 2 * 60 * 60 * 1000;
-  private static readonly SUB_HEALTHY_THRESHOLD_MS = 5 * 60 * 1000;
-  private static readonly UNHEALTHY_THRESHOLD_MS = 15 * 60 * 1000;
+  private static readonly SUB_HEALTHY_THRESHOLD_MS = 3 * 60 * 1000;
+  private static readonly UNHEALTHY_THRESHOLD_MS = 6 * 60 * 1000;
   private static readonly UNHEALTHY_PURGE_GRACE_MS = 30 * 1000;
 
   constructor() {
@@ -674,6 +674,11 @@ export interface TimeoutInspectionAggregate {
   roundSummaries: TimeoutInspectionSummary[];
 }
 
+export interface FailedTaskEntry {
+  roundId: string;
+  task: TaskRecord;
+}
+
 interface SerializedRoundData {
   roundId: string;
   tasks: TaskRecord[];
@@ -1146,6 +1151,25 @@ class SingleRoundStore {
       tasks: tasks.slice(start, end).map((task) => ({ ...task })),
       total,
     };
+  }
+
+  listFailedTasks(limit?: number): TaskRecord[] {
+    const normalizedLimit =
+      typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null;
+    const ids = normalizedLimit ? this.failedList.slice(0, normalizedLimit) : [...this.failedList];
+    const tasks: TaskRecord[] = [];
+
+    for (const id of ids) {
+      const task = this.tasks.get(id);
+      if (task) {
+        tasks.push({ ...task });
+      }
+      if (normalizedLimit && tasks.length >= normalizedLimit) {
+        break;
+      }
+    }
+
+    return tasks;
   }
 
   getRunStatistics(): RunStatistics {
@@ -2130,6 +2154,44 @@ class TaskStore {
     }
   }
 
+  listFailedTasks(options?: { roundId?: string; limit?: number }): FailedTaskEntry[] {
+    const targetRoundIds = options?.roundId ? [options.roundId] : this.roundOrder;
+    const normalizedLimit =
+      typeof options?.limit === "number" && Number.isFinite(options.limit) && options.limit > 0
+        ? Math.floor(options.limit)
+        : null;
+    const results: FailedTaskEntry[] = [];
+
+    for (const roundId of targetRoundIds) {
+      if (normalizedLimit && results.length >= normalizedLimit) {
+        break;
+      }
+      const entry = this.rounds.get(roundId);
+      if (!entry) {
+        continue;
+      }
+      const keepLoaded = entry.status === "active";
+      try {
+        const remaining = normalizedLimit ? normalizedLimit - results.length : undefined;
+        const tasks = this.withRoundStore(
+          entry,
+          (store) => store.listFailedTasks(remaining),
+          { keepLoaded, registerTasks: keepLoaded },
+        );
+        for (const task of tasks) {
+          results.push({ roundId: entry.id, task });
+          if (normalizedLimit && results.length >= normalizedLimit) {
+            break;
+          }
+        }
+      } catch (error) {
+        console.error(`读取任务轮 ${roundId} 的失败任务列表失败:`, error);
+      }
+    }
+
+    return results;
+  }
+
   getRunStatistics(roundId?: string): RunStatistics {
     const entry = this.getEntry(roundId);
     if (!entry) {
@@ -2682,8 +2744,6 @@ class TaskStore {
       const stats = this.getGlobalCompletionStats();
       const message = this.buildFeishuReportMessage(stats);
 
-      console.info("[飞书汇报] 准备发送任务状态汇报", { reason });
-
       const response = await fetch(webhookUrl, {
         method: "POST",
         headers: {
@@ -2710,12 +2770,6 @@ class TaskStore {
       this.feishuLastReportAt = Date.now();
       const nextReportAt = this.scheduleNextFeishuReport();
       scheduled = true;
-
-      console.info("[飞书汇报] 发送成功", {
-        reason,
-        lastReportAt: this.feishuLastReportAt,
-        nextReportAt,
-      });
 
       return {
         ok: true,

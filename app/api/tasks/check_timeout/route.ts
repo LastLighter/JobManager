@@ -22,11 +22,6 @@ export async function POST(request: NextRequest) {
 
   try {
     const failedCount = taskStore.failTimedOutTasks(timeoutMs, roundId);
-    console.info("[任务超时检查][POST] 标记超时任务完成", {
-      timeoutMs,
-      roundId: roundId ?? null,
-      failedCount,
-    });
 
     return NextResponse.json({
       success: true,

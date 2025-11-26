@@ -11,7 +11,6 @@ function extractPathsFromText(content: string): string[] {
 
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") ?? "";
-  console.debug("[任务导入][POST] 收到导入请求", { contentType });
 
   try {
     if (contentType.includes("multipart/form-data")) {
@@ -49,12 +48,6 @@ export async function POST(request: NextRequest) {
           sourceHint: name,
           activate: createdRounds.length === 0,
         });
-        console.debug("[任务导入][POST] 创建任务轮完成", {
-          fileName: name ?? null,
-          roundId: roundResult.roundId,
-          added: roundResult.added,
-          skipped: roundResult.skipped,
-        });
         totalAdded += roundResult.added;
         totalSkipped += roundResult.skipped;
         createdRounds.push({
@@ -74,11 +67,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      console.info("[任务导入][POST] 批量导入任务成功", {
-        createdRoundCount: createdRounds.length,
-        totalAdded,
-        totalSkipped,
-      });
       return NextResponse.json({
         rounds: createdRounds,
         totalAdded,
@@ -103,11 +91,6 @@ export async function POST(request: NextRequest) {
         sourceHint: "manual-json",
         activate: true,
       });
-      console.info("[任务导入][POST] JSON 导入任务成功", {
-        roundId: roundResult.roundId,
-        added: roundResult.added,
-        skipped: roundResult.skipped,
-      });
       return NextResponse.json({
         rounds: [
           {
@@ -130,11 +113,6 @@ export async function POST(request: NextRequest) {
       sourceType: "manual",
       sourceHint: "manual-text",
       activate: true,
-    });
-    console.info("[任务导入][POST] 文本导入任务成功", {
-      roundId: roundResult.roundId,
-      added: roundResult.added,
-      skipped: roundResult.skipped,
     });
     return NextResponse.json({
       rounds: [

@@ -21,10 +21,6 @@ export async function GET(request: NextRequest) {
     const taskInfo = taskStore.findTaskByIdOrPath(query, roundId ?? undefined);
 
     if (!taskInfo) {
-      console.info("[任务搜索][GET] 未找到匹配任务", {
-        query,
-        roundId: roundId ?? null,
-      });
       return NextResponse.json(
         { error: "未找到匹配的任务", found: false },
         {
@@ -32,13 +28,6 @@ export async function GET(request: NextRequest) {
         },
       );
     }
-
-    console.debug("[任务搜索][GET] 找到匹配任务", {
-      query,
-      roundId: roundId ?? null,
-      taskId: taskInfo.task.id,
-      status: taskInfo.task.status,
-    });
 
     return NextResponse.json({
       found: true,

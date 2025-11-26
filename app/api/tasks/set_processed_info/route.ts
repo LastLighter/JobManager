@@ -13,7 +13,6 @@ export async function POST(request: Request) {
       item_num: body?.item_num,
       running_time: body?.running_time,
     };
-    console.debug("[节点统计][POST] 收到节点处理信息", payload);
   } catch (error) {
     console.warn("[节点统计][POST] 解析请求体失败", error);
     return NextResponse.json(
@@ -66,11 +65,6 @@ export async function POST(request: Request) {
     );
   }
 
-  console.info("[节点统计][POST] 记录节点处理信息成功", {
-    nodeId: payload.node_id,
-    itemNum: payload.item_num,
-    runningTime: payload.running_time,
-  });
   return NextResponse.json({
     success: true,
     node_id: payload.node_id,

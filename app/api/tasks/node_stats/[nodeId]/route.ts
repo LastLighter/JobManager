@@ -19,10 +19,6 @@ export async function DELETE(
   }
 
   try {
-    console.debug("[节点统计][DELETE] 尝试删除节点统计信息", {
-      nodeId,
-      roundId: roundId ?? null,
-    });
     const result = taskStore.deleteNodeStats(nodeId, roundId);
 
     if (!result.deleted) {
@@ -36,10 +32,6 @@ export async function DELETE(
       );
     }
 
-    console.info("[节点统计][DELETE] 节点统计信息删除成功", {
-      nodeId,
-      roundId: roundId ?? null,
-    });
     return NextResponse.json({
       success: true,
       nodeId,

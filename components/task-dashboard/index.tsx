@@ -94,6 +94,7 @@ export function TaskDashboard() {
   const [feishuReportInFlight, setFeishuReportInFlight] = useState(false);
   const [isTriggeringFeishuReport, setIsTriggeringFeishuReport] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [isDownloadingFailedList, setIsDownloadingFailedList] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -268,6 +269,7 @@ export function TaskDashboard() {
   }, []);
 
   const currentTasks = summary?.tasks ?? [];
+  const failedTaskCount = summary?.counts.failed ?? 0;
   const nodeCount = nodeStatsSummary?.nodeCount ?? nodeStatsTotal ?? nodeStats.length;
   const nodeHealthOrder: Array<keyof NodeHealthStats> = ["healthy", "subHealthy", "unhealthy"];
   const roundNameById = useMemo(() => {
@@ -330,7 +332,6 @@ export function TaskDashboard() {
       if (response.ok) {
         const result = await response.json();
         if (result.failedCount > 0) {
-          console.log(`自动检查（${selectedRoundDisplayName}）：已将 ${result.failedCount} 个超时任务标记为失败`);
           // Silently refresh the summary
           await fetchSummary({ keepPage: true, keepRoundPage: true });
         }
@@ -600,6 +601,58 @@ export function TaskDashboard() {
   const handleRefresh = async () => {
     await fetchSummary({ keepPage: true, keepRoundPage: true, roundId: selectedRoundId });
   };
+
+  const handleDownloadFailedList = useCallback(async () => {
+    if (failedTaskCount === 0 || isDownloadingFailedList) {
+      return;
+    }
+
+    setIsDownloadingFailedList(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (selectedRoundId && selectedRoundId !== "") {
+        params.set("roundId", selectedRoundId);
+      }
+      const query = params.toString();
+      const endpoint = query ? `/api/tasks/failed_list?${query}` : "/api/tasks/failed_list";
+      const response = await fetch(endpoint, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition");
+      let fileName = "failed-tasks.csv";
+      if (disposition) {
+        const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+        if (match) {
+          const encodedName = match[1] ?? match[2];
+          try {
+            fileName = decodeURIComponent(encodedName);
+          } catch {
+            fileName = encodedName ?? fileName;
+          }
+        }
+      }
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setInfoMessage("失败文件列表已下载");
+    } catch (err) {
+      console.error("下载失败列表失败", err);
+      setError("下载失败列表失败，请稍后重试。");
+    } finally {
+      setIsDownloadingFailedList(false);
+    }
+  }, [failedTaskCount, isDownloadingFailedList, selectedRoundId]);
 
   const handleClearTasks = useCallback(
     async (scope: "selected" | "all") => {
@@ -1445,7 +1498,7 @@ export function TaskDashboard() {
                     </span>
                   ))}
                   <span className="text-[11px] text-slate-400">
-                    连续 5 分钟无回传判定为亚健康，超过 15 分钟自动清除。
+                    连续 3 分钟无回传判定为亚健康，超过 6 分钟将列入非健康列表。
                   </span>
                 </div>
 
@@ -1832,6 +1885,15 @@ export function TaskDashboard() {
                     disabled={loading}
                   >
                     {loading ? "刷新中..." : "刷新"}
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleDownloadFailedList}
+                    disabled={isDownloadingFailedList || failedTaskCount === 0}
+                    title={failedTaskCount === 0 ? "当前没有失败任务" : undefined}
+                  >
+                    {isDownloadingFailedList ? "生成文件..." : "下载失败列表"}
                   </button>
                 </div>
               </div>

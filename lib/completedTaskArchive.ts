@@ -1,9 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync } from "fs";
-import { appendFile } from "fs/promises";
+import { appendFile, unlink } from "fs/promises";
 import path from "path";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const COMPLETED_TASKS_FILE = path.join(DATA_DIR, "completed_tasks.log");
+const LEGACY_COMPLETED_TASK_FILE = path.join(DATA_DIR, "completed_task.log");
 const DEFAULT_FLUSH_THRESHOLD = 10_000;
 
 function ensureDataDir() {
@@ -105,6 +106,34 @@ class CompletedTaskArchive {
     }
   }
 
+  async clearLogFiles(): Promise<void> {
+    if (this.flushPromise) {
+      try {
+        await this.flushPromise;
+      } catch (error) {
+        console.error("[已完成任务归档] 等待写入完成失败", error);
+      } finally {
+        this.flushPromise = null;
+      }
+    }
+
+    this.flushScheduled = false;
+    this.buffer = [];
+
+    await Promise.all([this.removeLogFile(COMPLETED_TASKS_FILE), this.removeLogFile(LEGACY_COMPLETED_TASK_FILE)]);
+  }
+
+  private async removeLogFile(filePath: string) {
+    try {
+      await unlink(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        return;
+      }
+      console.error(`[已完成任务归档] 删除日志文件失败: ${filePath}`, error);
+    }
+  }
+
   private scheduleFlush() {
     if (this.flushScheduled) {
       return;
@@ -163,4 +192,8 @@ class CompletedTaskArchive {
 }
 
 export const completedTaskArchive = new CompletedTaskArchive();
+
+export async function clearCompletedTasksLog() {
+  await completedTaskArchive.clearLogFiles();
+}
 

@@ -19,13 +19,6 @@ export async function GET(request: NextRequest) {
     const summary = taskStore.getNodeStatsSummary(roundId);
     const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
 
-    console.debug("[节点统计][GET] 获取节点统计成功", {
-      roundId: roundId ?? null,
-      page: effectivePage,
-      pageSize,
-      total,
-    });
-
     return NextResponse.json({
       nodes: nodes.map((node) => ({
         nodeId: node.nodeId,
@@ -78,10 +71,6 @@ export async function DELETE(request: NextRequest) {
   const roundId = request.nextUrl.searchParams.get("roundId") ?? undefined;
   try {
     const result = taskStore.clearNodeStats(roundId);
-    console.info("[节点统计][DELETE] 清理节点统计成功", {
-      roundId: roundId ?? null,
-      cleared: result.cleared,
-    });
     return NextResponse.json({
       success: true,
       cleared: result.cleared,
